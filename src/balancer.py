@@ -386,12 +386,7 @@ def create_lobbies(lobby_count):
                         raise ValueError('Balance not found.')
                 elif fill_players_hard(free_players) is False:
                     raise ValueError('Not enough free players.')
-        for i, lobby in enumerate(lobbies):
-            print(f"Lobby {i + 1}:")
-            print("Team 1:", [player.name for player in
-                              [lobby["team1"]["tank"]] + lobby["team1"]["damage"] + lobby["team1"]["support"]])
-            print("Team 2:", [player.name for player in
-                              [lobby["team2"]["tank"]] + lobby["team2"]["damage"] + lobby["team2"]["support"]])
+        return lobbies, free_players
 
 
 try:
