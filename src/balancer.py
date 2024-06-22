@@ -389,7 +389,7 @@ def create_lobbies(lobby_count):
         return lobbies, free_players
 
 
-try:
-    create_lobbies(2)
-except ValueError as e:
-    print(f"Error: {e}")
+# try:
+#     create_lobbies(2)
+# except ValueError as e:
+#     print(f"Error: {e}")
