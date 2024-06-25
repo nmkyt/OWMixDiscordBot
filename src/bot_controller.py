@@ -1,8 +1,7 @@
 import discord
 from config import bot, BOT_TOKEN, session
 from models import Player
-from sync_logic import convert_rank_to_value, rank_to_value
-from balancer import create_lobbies
+from sync_logic import convert_rank_to_value, rank_to_value, create_lobbies_caller
 
 
 class CheckinView(discord.ui.View):
@@ -87,7 +86,7 @@ async def update_user_status(user_id, field, value):
 
 
 @bot.command()
-async def edit(ctx, tank_rating: str, damage_rating: str, support_rating: str):
+async def update(ctx, tank_rating: str, damage_rating: str, support_rating: str):
     discord_id = ctx.author.id
     username = ctx.author.name
     user = session.query(Player).filter(Player.discord_id == str(discord_id)).first()
@@ -193,27 +192,29 @@ async def register(ctx, battle_tag: str, tank_rating: str, damage_rating: str, s
         else:
             await ctx.send('Введите корректную команду. Пример: !register Sacr1ficed#2456, 4000, d2, 3700')
     else:
-        await ctx.send('Вы уже зарегистрированы, для изменения пользователя используйте команду !edit')
+        await ctx.send('Вы уже зарегистрированы, для изменения пользователя используйте команду !update')
 
 
 @bot.command()
-async def get_lobbies(ctx, create_parameter: str, lobby_count: int):
-    lobbies = []
-    queued_players = []
-    if create_parameter == 'free':
-        pass
-    if create_parameter == 'balance':
-        try:
-            lobbies, queued_players = create_lobbies(lobby_count)
-            print(lobbies)
-        except ValueError as e:
-            print(f"Error: {e}")
-        for i, lobby in enumerate(lobbies):
-            await ctx.send(f'**🌞 Лобби {i + 1}**')
-            await ctx.send("**💙 Синяя команда**")
-            await ctx.send(f'🛡️ **{lobby['team1']['tank'].name}** 🏹 **{lobby['team1']['damage'][0].name} | {lobby['team1']['damage'][1].name}** 💉 **{lobby['team1']['support'][0].name} | {lobby['team1']['support'][1].name}**')
-            await ctx.send("**💖 Красная команда**")
-            await ctx.send(f'🛡️ **{lobby['team2']['tank'].name}** 🏹 **{lobby['team2']['damage'][0].name} | {lobby['team2']['damage'][1].name}** 💉 **{lobby['team2']['support'][0].name} | {lobby['team2']['support'][1].name}**')
+async def create_lobby(ctx, create_option: str, lobby_count: int):
+    lobbies, queued_players = create_lobbies_caller(lobby_count, create_option)
+    for i, lobby in enumerate(lobbies):
+        await ctx.send(f'**🌞 Лобби {i + 1}**')
+        await ctx.send("**💙 Синяя команда**")
+        await ctx.send(f'🛡️ **{lobby['team1']['tank'].name}** 🏹 **{lobby['team1']['damage'][0].name} |'
+                       f' {lobby['team1']['damage'][1].name}**  💉 **{lobby['team1']['support'][0].name} |'
+                       f' {lobby['team1']['support'][1].name}**')
+        await ctx.send("**💖 Красная команда**")
+        await ctx.send(
+            f'🛡️ **{lobby['team2']['tank'].name}** 🏹 **{lobby['team2']['damage'][0].name} |'
+            f' {lobby['team2']['damage'][1].name}** 💉 **{lobby['team2']['support'][0].name} |'
+            f' {lobby['team2']['support'][1].name}**')
+        await ctx.send('------------------------------------------')
+    message = ''
+    if queued_players:
+        for player in queued_players:
+            message = message + f'{player.name} '
+        await ctx.send(f"**Ожидающие игроки**: {message}")
 
 
 bot.run(BOT_TOKEN)

@@ -14,4 +14,10 @@ class Player(Base):
     check_in = Column(String, nullable=True)
 
 
+class Queue(Base):
+    __tablename__ = 'queue'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    discord_id = Column(String, nullable=True)
+
+
 Base.metadata.create_all(engine)

@@ -1,3 +1,7 @@
+from balancer import create_lobbies
+from config import session
+from models import Queue
+
 rank_to_value = {
     'b5': 1000, 'b4': 1100, 'b3': 1200, 'b2': 1300, 'b1': 1400,
     's5': 1500, 's4': 1600, 's3': 1700, 's2': 1800, 's1': 1900,
@@ -15,3 +19,48 @@ def convert_rank_to_value(rank: str) -> int:
         return rank_to_value.get(rank, "Invalid rank")
     else:
         raise ValueError("Invalid rank")
+
+
+def lobbies_players(lobbies):
+    active_players = []
+    for lobby in lobbies:
+        active_players.append(lobby['team1']['tank'].discord_id)
+        active_players.append(lobby['team2']['tank'].discord_id)
+        for player in lobby['team1']['damage']:
+            active_players.append(player.discord_id)
+        for player in lobby['team2']['damage']:
+            active_players.append(player.discord_id)
+        for player in lobby['team1']['support']:
+            active_players.append(player.discord_id)
+        for player in lobby['team2']['support']:
+            active_players.append(player.discord_id)
+    return active_players
+
+
+def create_lobbies_caller(lobby_count, create_option):
+    queued_players = []
+    lobbies = []
+    count = 0
+    if create_option == 'free':
+        pass
+    if create_option == 'balance':
+        try:
+            while True:
+                count += 1
+                try:
+                    lobbies, queued_players = create_lobbies(lobby_count)
+                except ValueError as e:
+                    print(f"Error: {e}")
+                if len(lobbies) == lobby_count:
+                    for player in queued_players:
+                        user = Queue(discord_id=player.discord_id)
+                        session.add(user)
+                        session.commit()
+                    break
+                if count == 100:
+                    raise StopIteration('Balancer cant find players')
+        except StopIteration as e:
+            print(f"Error: {e}")
+    if create_option == 'queued_players':
+        pass
+    return lobbies, queued_players

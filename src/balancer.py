@@ -1,5 +1,5 @@
 from config import session
-from models import Player
+from models import Player, Queue
 import random
 
 
@@ -13,23 +13,23 @@ def sort_players(player, elo):
     if player.tank_rating is not None:
         if player.tank_rating >= 3800:
             elo['tank']['high'].append(player)
-        if 3300 <= player.tank_rating < 3800:
+        if 3000 <= player.tank_rating < 3800:
             elo['tank']['mid'].append(player)
-        if player.tank_rating < 3300:
+        if player.tank_rating < 3000:
             elo['tank']['low'].append(player)
     if player.damage_rating is not None:
         if player.damage_rating >= 3800:
             elo['damage']['high'].append(player)
-        if 3300 <= player.damage_rating < 3800:
+        if 3000 <= player.damage_rating < 3800:
             elo['damage']['mid'].append(player)
-        if player.damage_rating < 3300:
+        if player.damage_rating < 3000:
             elo['damage']['low'].append(player)
     if player.support_rating is not None:
         if player.support_rating >= 3800:
             elo['support']['high'].append(player)
-        if 3300 <= player.support_rating < 3800:
+        if 3000 <= player.support_rating < 3800:
             elo['support']['mid'].append(player)
-        if player.support_rating < 3300:
+        if player.support_rating < 3000:
             elo['support']['low'].append(player)
 
 
@@ -230,38 +230,38 @@ def soft_balance(lobby, free_players, elo):
                         if (lobby['team1']['damage'][0] or lobby['team1']['damage'][1]) in elo['damage']['high']:
                             if player in elo['damage']['high']:
                                 if check_player_status(player, lobby) is False:
-                                    lobby['team2']['damage'][1] = lobby['team2']['damage'][0]
+                                    lobby['team2']['damage'][0] = lobby['team2']['damage'][1]
                                     lobby['team2']['damage'][0] = player
                         if check_player_status(player, lobby) is False:
-                            lobby['team1']['damage'][1] = lobby['team1']['damage'][0]
+                            lobby['team1']['damage'][0] = lobby['team1']['damage'][1]
                             lobby['team1']['damage'][0] = player
                     if player.priority_role == 'support':
                         if (lobby['team1']['support'][0] or lobby['team1']['support'][1]) in elo['support']['high']:
                             if player in elo['support']['high']:
                                 if check_player_status(player, lobby) is False:
-                                    lobby['team2']['support'][1] = lobby['team2']['support'][0]
+                                    lobby['team2']['support'][0] = lobby['team2']['support'][1]
                                     lobby['team2']['support'][0] = player
                         if check_player_status(player, lobby) is False:
-                            lobby['team1']['support'][1] = lobby['team1']['support'][0]
+                            lobby['team1']['support'][0] = lobby['team1']['support'][1]
                             lobby['team1']['support'][0] = player
                 else:
                     if player.priority_role == 'damage':
                         if (lobby['team2']['damage'][0] or lobby['team2']['damage'][1]) in elo['damage']['high']:
                             if player in elo['damage']['high']:
                                 if check_player_status(player, lobby) is False:
-                                    lobby['team1']['damage'][1] = lobby['team2']['damage'][0]
+                                    lobby['team1']['damage'][0] = lobby['team2']['damage'][1]
                                     lobby['team1']['damage'][0] = player
                         if check_player_status(player, lobby) is False:
-                            lobby['team2']['damage'][1] = lobby['team2']['damage'][0]
+                            lobby['team2']['damage'][0] = lobby['team2']['damage'][1]
                             lobby['team2']['damage'][0] = player
                     if player.priority_role == 'support':
                         if (lobby['team2']['support'][0] or lobby['team2']['support'][1]) in elo['support']['high']:
                             if player in elo['support']['high']:
                                 if check_player_status(player, lobby) is False:
-                                    lobby['team1']['support'][1] = lobby['team2']['support'][0]
+                                    lobby['team1']['support'][0] = lobby['team2']['support'][1]
                                     lobby['team1']['support'][0] = player
                         if check_player_status(player, lobby) is False:
-                            lobby['team2']['support'][1] = lobby['team2']['support'][0]
+                            lobby['team2']['support'][0] = lobby['team2']['support'][1]
                             lobby['team2']['support'][0] = player
                 team1_rating, team2_rating, tank1_rating, tank2_rating = sum_rating(lobby)
                 if abs(team1_rating - team2_rating) <= 300:
@@ -346,8 +346,59 @@ def hard_balance(lobby, free_players, elo):
         return False
 
 
+def fill_queued_players(lobby, free_players, queued_players):
+    uq_players = []
+    for player in queued_players:
+        if player not in free_players:
+            uq_players.append(player)
+        role = player.priority_role
+        if role == 'tank':
+            for team_name in ["team1", "team2"]:
+                if abs(lobby[team_name]['tank'].tank_rating - player.tank_rating) < 500:
+                    if player in free_players:
+                        old_player = lobby[team_name]['tank']
+                        replace_player(lobby[team_name], 'tank', old_player, player, free_players, uq_players)
+        if role == 'damage':
+            for team_name in ["team1", "team2"]:
+                for team_player in [0, 1]:
+                    if abs(lobby[team_name]['damage'][team_player].damage_rating - player.damage_rating) < 700:
+                        if player in free_players:
+                            old_player = lobby[team_name][role][0]
+                            replace_player(lobby[team_name], role, old_player, player, free_players, uq_players)
+        if role == 'support':
+            for team_name in ["team1", "team2"]:
+                for team_player in [0, 1]:
+                    if abs(lobby[team_name]['support'][team_player].support_rating - player.support_rating) < 700:
+                        if player in free_players:
+                            old_player = lobby[team_name][role][0]
+                            replace_player(lobby[team_name], role, old_player, player, free_players, uq_players)
+    for player in uq_players:
+        queued_players.remove(player)
+    if queued_players:
+        return False
+    else:
+        return True
+
+
+def replace_player(team, role, old_player, new_player, free_players, uq_players):
+    if role == 'tank':
+        team['tank'] = new_player
+        free_players.remove(new_player)
+        uq_players.remove(new_player)
+        free_players.append(old_player)
+    else:
+        free_players.remove(new_player)
+        uq_players.append(new_player)
+        free_players.append(old_player)
+        team[role] = [new_player if player == old_player else player for player in team[role]]
+
+
 def create_lobbies(lobby_count):
     free_players = get_players()
+    queued_players = []
+    players = session.query(Queue).all()
+    for player in players:
+        queued_players.append(session.query(Player).filter(Player.discord_id == player.discord_id).first())
     if len(free_players) >= 10 * lobby_count:
         count = 0
         lobbies = []
@@ -386,10 +437,14 @@ def create_lobbies(lobby_count):
                         raise ValueError('Balance not found.')
                 elif fill_players_hard(free_players) is False:
                     raise ValueError('Not enough free players.')
+        step = 0
+        for lobby in lobbies:
+            step += 1
+            queue = fill_queued_players(lobby, free_players, queued_players)
+            if len(lobbies) == step and queue is False:
+                raise ValueError('Cant fill queue players')
+        players = session.query(Queue).all()
+        for player in players:
+            session.delete(player)
+        session.commit()
         return lobbies, free_players
-
-
-# try:
-#     create_lobbies(2)
-# except ValueError as e:
-#     print(f"Error: {e}")
