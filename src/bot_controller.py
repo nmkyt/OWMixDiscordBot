@@ -1,7 +1,7 @@
 import discord
 from config import bot, BOT_TOKEN, session
-from models import Player
-from sync_logic import convert_rank_to_value, rank_to_value, create_lobbies_caller
+from models import Player, Queue
+from sync_logic import convert_rank_to_value, rank_to_value, create_lobbies_caller, get_map
 
 
 class CheckinView(discord.ui.View):
@@ -196,8 +196,23 @@ async def register(ctx, battle_tag: str, tank_rating: str, damage_rating: str, s
 
 
 @bot.command()
-async def create_lobby(ctx, create_option: str, lobby_count: int):
-    lobbies, queued_players = create_lobbies_caller(lobby_count, create_option)
+async def uncheck(ctx, discord_id: str):
+    user = session.query(Player).filter(Player.discord_id == str(discord_id)).first()
+    if user:
+        user.check_in = 'no'
+        session.commit()
+        user = session.query(Queue).filter(Queue.discord_id == str(discord_id)).first()
+        if user:
+            session.delete(user)
+            session.commit()
+        await ctx.send('Пользователь был успешно удален из очереди')
+    else:
+        await ctx.send('Пользователь не найден')
+
+
+@bot.command()
+async def create_lobby(ctx, lobby_count: int):
+    lobbies, queued_players = create_lobbies_caller(lobby_count)
     for i, lobby in enumerate(lobbies):
         await ctx.send(f'**🌞 Лобби {i + 1}**')
         await ctx.send("**💙 Синяя команда**")
@@ -209,6 +224,7 @@ async def create_lobby(ctx, create_option: str, lobby_count: int):
             f'🛡️ **{lobby['team2']['tank'].name}** 🏹 **{lobby['team2']['damage'][0].name} |'
             f' {lobby['team2']['damage'][1].name}** 💉 **{lobby['team2']['support'][0].name} |'
             f' {lobby['team2']['support'][1].name}**')
+        await ctx.send(f'**🎲 Карта: {get_map()}**')
         await ctx.send('------------------------------------------')
     message = ''
     if queued_players:

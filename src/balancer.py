@@ -437,14 +437,15 @@ def create_lobbies(lobby_count):
                         raise ValueError('Balance not found.')
                 elif fill_players_hard(free_players) is False:
                     raise ValueError('Not enough free players.')
-        step = 0
-        for lobby in lobbies:
-            step += 1
-            queue = fill_queued_players(lobby, free_players, queued_players)
-            if len(lobbies) == step and queue is False:
-                raise ValueError('Cant fill queue players')
-        players = session.query(Queue).all()
-        for player in players:
-            session.delete(player)
-        session.commit()
+        if len(queued_players) <= 10:
+            step = 0
+            for lobby in lobbies:
+                step += 1
+                queue = fill_queued_players(lobby, free_players, queued_players)
+                if len(lobbies) == step and queue is False:
+                    raise ValueError('Cant fill queue players')
+            players = session.query(Queue).all()
+            for player in players:
+                session.delete(player)
+            session.commit()
         return lobbies, free_players

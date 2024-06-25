@@ -1,3 +1,5 @@
+import random
+
 from balancer import create_lobbies
 from config import session
 from models import Queue
@@ -12,6 +14,18 @@ rank_to_value = {
     'gm5': 4000, 'gm4': 4100, 'gm3': 4200, 'gm2': 4300, 'gm1': 4400,
     'cp5': 4500, 'cp4': 4600, 'cp3': 4700, 'cp2': 4800, 'cp1': 4900
 }
+
+
+maps = [
+    'Lijiang Tower', 'Antarctic Peninsula', 'Ilios', 'Nepal', 'Samoa',
+    'Circuit Royal', 'Dorado', 'Havana', 'Junkertown', 'Rialto', 'Route 66'
+    'Watchpoint: Gibraltar', 'Blizzard World', 'Eichenwalde', 'Hollywood',
+    'Kings Row', 'Midtown', 'Paraiso', 'Colosseo', 'Runasapi'
+]
+
+
+def get_map():
+    return random.choice(maps)
 
 
 def convert_rank_to_value(rank: str) -> int:
@@ -37,30 +51,25 @@ def lobbies_players(lobbies):
     return active_players
 
 
-def create_lobbies_caller(lobby_count, create_option):
+def create_lobbies_caller(lobby_count):
     queued_players = []
     lobbies = []
     count = 0
-    if create_option == 'free':
-        pass
-    if create_option == 'balance':
-        try:
-            while True:
-                count += 1
-                try:
-                    lobbies, queued_players = create_lobbies(lobby_count)
-                except ValueError as e:
-                    print(f"Error: {e}")
-                if len(lobbies) == lobby_count:
-                    for player in queued_players:
-                        user = Queue(discord_id=player.discord_id)
-                        session.add(user)
-                        session.commit()
-                    break
-                if count == 100:
-                    raise StopIteration('Balancer cant find players')
-        except StopIteration as e:
-            print(f"Error: {e}")
-    if create_option == 'queued_players':
-        pass
+    try:
+        while True:
+            count += 1
+            try:
+                lobbies, queued_players = create_lobbies(lobby_count)
+            except ValueError as e:
+                print(f"Error: {e}")
+            if len(lobbies) == lobby_count:
+                for player in queued_players:
+                    user = Queue(discord_id=player.discord_id)
+                    session.add(user)
+                    session.commit()
+                break
+            if count == 100:
+                raise StopIteration('Balancer cant find players')
+    except StopIteration as e:
+        print(f"Error: {e}")
     return lobbies, queued_players
