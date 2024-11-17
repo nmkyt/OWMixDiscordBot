@@ -1,8 +1,7 @@
 import random
-
-from balancer import create_lobbies
-from config import session
-from models import Queue
+from src.balancer import create_lobbies
+from src.config import session
+from src.models import Queue, OldQueue
 
 rank_to_value = {
     'b5': 1000, 'b4': 1100, 'b3': 1200, 'b2': 1300, 'b1': 1400,
@@ -18,9 +17,9 @@ rank_to_value = {
 
 maps = [
     'Lijiang Tower', 'Antarctic Peninsula', 'Ilios', 'Nepal', 'Samoa',
-    'Circuit Royal', 'Dorado', 'Havana', 'Junkertown', 'Rialto', 'Route 66'
+    'Circuit Royal', 'Dorado', 'Havana', 'Junkertown', 'Rialto', 'Route 66',
     'Watchpoint: Gibraltar', 'Blizzard World', 'Eichenwalde', 'Hollywood',
-    'Kings Row', 'Midtown', 'Paraiso', 'Colosseo', 'Runasapi'
+    'Midtown', 'Paraiso', 'Colosseo', 'Runasapi', 'Oasis'
 ]
 
 
@@ -33,6 +32,17 @@ def convert_rank_to_value(rank: str) -> int:
         return rank_to_value.get(rank, "Invalid rank")
     else:
         raise ValueError("Invalid rank")
+
+
+def get_rating(lobby):
+    team1_rating = (sum(player.tank_rating for player in [lobby["team1"]["tank"]] if player) +
+                   sum(player.damage_rating for player in lobby["team1"]["damage"]) +
+                   sum(player.support_rating for player in lobby["team1"]["support"]))
+    team2_rating = (sum(player.tank_rating for player in [lobby["team2"]["tank"]] if player) +
+                   sum(player.damage_rating for player in lobby["team2"]["damage"]) +
+                   sum(player.support_rating for player in lobby["team2"]["support"]))
+    match_rating = (team1_rating + team2_rating) / 10
+    return abs(team1_rating / 5 - team2_rating / 5), match_rating
 
 
 def lobbies_players(lobbies):
@@ -49,6 +59,19 @@ def lobbies_players(lobbies):
         for player in lobby['team2']['support']:
             active_players.append(player.discord_id)
     return active_players
+
+
+def swap_queue():
+    players = session.query(Queue).all()
+    for player in players:
+        session.delete(player)
+    session.commit()
+    players = session.query(OldQueue).all()
+    for player in players:
+        user = Queue(discord_id=player.discord_id)
+        session.add(user)
+    session.commit()
+    print('Old queue was successfully accept.')
 
 
 def create_lobbies_caller(lobby_count):
@@ -73,3 +96,4 @@ def create_lobbies_caller(lobby_count):
     except StopIteration as e:
         print(f"Error: {e}")
     return lobbies, queued_players
+

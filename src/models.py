@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String
-from config import Base, engine
+from src.config import Base, engine
 
 
 class Player(Base):
@@ -16,6 +16,12 @@ class Player(Base):
 
 class Queue(Base):
     __tablename__ = 'queue'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    discord_id = Column(String, nullable=True)
+
+
+class OldQueue(Base):
+    __tablename__ = 'old_queue'
     id = Column(Integer, primary_key=True, autoincrement=True)
     discord_id = Column(String, nullable=True)
 

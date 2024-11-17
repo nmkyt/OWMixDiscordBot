@@ -1,5 +1,5 @@
-from config import session
-from models import Player, Queue
+from src.config import session
+from src.models import Player, Queue, OldQueue
 import random
 
 
@@ -43,15 +43,16 @@ def elo_cleaner():
 
 
 def sum_rating(lobby):
-    team1_rating = sum(player.tank_rating for player in [lobby["team1"]["tank"]] if player) + \
-                   sum(player.damage_rating for player in lobby["team1"]["damage"]) + \
-                   sum(player.support_rating for player in lobby["team1"]["support"])
-    team2_rating = sum(player.tank_rating for player in [lobby["team2"]["tank"]] if player) + \
-                   sum(player.damage_rating for player in lobby["team2"]["damage"]) + \
-                   sum(player.support_rating for player in lobby["team2"]["support"])
+    team1_rating = (sum(player.tank_rating for player in [lobby["team1"]["tank"]] if player) +
+                   sum(player.damage_rating for player in lobby["team1"]["damage"]) +
+                   sum(player.support_rating for player in lobby["team1"]["support"]))
+    team2_rating = (sum(player.tank_rating for player in [lobby["team2"]["tank"]] if player) +
+                   sum(player.damage_rating for player in lobby["team2"]["damage"]) +
+                   sum(player.support_rating for player in lobby["team2"]["support"]))
     tank1_rating = sum(player.tank_rating for player in [lobby["team1"]["tank"]] if player)
     tank2_rating = sum(player.tank_rating for player in [lobby["team2"]["tank"]] if player)
     return team1_rating, team2_rating, tank1_rating, tank2_rating
+
 
 
 def fill_players_soft(free_players):
@@ -444,8 +445,18 @@ def create_lobbies(lobby_count):
                 queue = fill_queued_players(lobby, free_players, queued_players)
                 if len(lobbies) == step and queue is False:
                     raise ValueError('Cant fill queue players')
-            players = session.query(Queue).all()
+            players = session.query(OldQueue).all()
             for player in players:
                 session.delete(player)
             session.commit()
+            players = session.query(Queue).all()
+            for player in players:
+                user = OldQueue(discord_id=player.discord_id)
+                session.add(user)
+            session.commit()
+            for player in players:
+                session.delete(player)
+            session.commit()
+        else:
+            raise 'Queued players more than 10.'
         return lobbies, free_players
