@@ -1,5 +1,5 @@
 from src.config import session
-from src.models import Player, Queue, OldQueue
+from src.models import Player, Queue
 import random
 
 
@@ -9,155 +9,105 @@ def get_players():
     return free_players
 
 
-def sort_players(player, elo):
-    if player.tank_rating is not None:
-        if player.tank_rating >= 3800:
-            elo['tank']['high'].append(player)
-        if 3000 <= player.tank_rating < 3800:
-            elo['tank']['mid'].append(player)
-        if player.tank_rating < 3000:
-            elo['tank']['low'].append(player)
-    if player.damage_rating is not None:
-        if player.damage_rating >= 3800:
-            elo['damage']['high'].append(player)
-        if 3000 <= player.damage_rating < 3800:
-            elo['damage']['mid'].append(player)
-        if player.damage_rating < 3000:
-            elo['damage']['low'].append(player)
-    if player.support_rating is not None:
-        if player.support_rating >= 3800:
-            elo['support']['high'].append(player)
-        if 3000 <= player.support_rating < 3800:
-            elo['support']['mid'].append(player)
-        if player.support_rating < 3000:
-            elo['support']['low'].append(player)
+def get_queue():
+    queued_players = session.query(Queue).all()
+    free_players = get_players()
+    queue = []
+    for player_queue in queued_players:
+        for player_free in free_players:
+            if player_queue.discord_id == player_free.discord_id:
+                queue.append(player_free)
+    return queue
 
 
-def elo_cleaner():
-    elo = {
-        'tank': {"high": [], "mid": [], "low": []},
-        'damage': {"high": [], "mid": [], "low": []},
-        'support': {"high": [], "mid": [], "low": []},
-    }
-    return elo
+def find_closest_tanks(free_players, queued_players):
+    """
+    Находит двух ближайших игроков на роли 'Танк', включая queued_players.
+    """
+    tanks = [p for p in free_players if p.priority_role == "tank"]
+    selected = []
+
+    # Добавляем игроков из очереди, если они есть
+    queued_tanks = [p for p in queued_players if p.priority_role == "tank"]
+    selected.extend(queued_tanks)
+
+    if len(tanks) + len(selected) < 2:
+        raise ValueError("Недостаточно игроков на роли Танк")
+
+    # Заполняем оставшиеся места методом перебора
+    min_difference = float('inf')
+    closest_pair = None
+    for i in range(len(tanks)):
+        for j in range(i + 1, len(tanks)):
+            if tanks[i] in selected or tanks[j] in selected:
+                continue
+            diff = abs(tanks[i].tank_rating - tanks[j].tank_rating)
+            if diff < min_difference:
+                min_difference = diff
+                closest_pair = [tanks[i], tanks[j]]
+
+    selected.extend(closest_pair[: 2 - len(selected)])
+    return selected
 
 
-def sum_rating(lobby):
-    team1_rating = (sum(player.tank_rating for player in [lobby["team1"]["tank"]] if player) +
-                   sum(player.damage_rating for player in lobby["team1"]["damage"]) +
-                   sum(player.support_rating for player in lobby["team1"]["support"]))
-    team2_rating = (sum(player.tank_rating for player in [lobby["team2"]["tank"]] if player) +
-                   sum(player.damage_rating for player in lobby["team2"]["damage"]) +
-                   sum(player.support_rating for player in lobby["team2"]["support"]))
-    tank1_rating = sum(player.tank_rating for player in [lobby["team1"]["tank"]] if player)
-    tank2_rating = sum(player.tank_rating for player in [lobby["team2"]["tank"]] if player)
-    return team1_rating, team2_rating, tank1_rating, tank2_rating
+def find_closest_damage(free_players, queued_players):
+    """
+    Находит четырех ближайших игроков на роли 'Урон', включая queued_players.
+    """
+    damage = [p for p in free_players if p.priority_role == "damage"]
+    selected = []
+
+    # Добавляем игроков из очереди
+    queued_damage = [p for p in queued_players if p.priority_role == "damage"]
+    selected.extend(queued_damage)
+
+    if len(damage) + len(selected) < 4:
+        raise ValueError("Недостаточно игроков на роли Урон")
+
+    # Заполняем оставшиеся места
+    remaining = [p for p in damage if p not in selected]
+    while len(selected) < 4:
+        closest = None
+        min_difference = float('inf')
+        for i, player in enumerate(remaining):
+            diff = sum(abs(player.damage_rating - sel.damage_rating) for sel in selected)
+            if diff < min_difference:
+                min_difference = diff
+                closest = i
+
+        selected.append(remaining.pop(closest))
+
+    return selected
 
 
+def find_closest_support(players, queued_players):
+    """
+    Находит четырех ближайших игроков на роли 'Поддержка', включая queued_players.
+    """
+    support = [p for p in players if p.priority_role == "support"]
+    selected = []
 
-def fill_players_soft(free_players):
-    players = 0
-    lobby = {
-        "team1": {"tank": None, "damage": [], "support": []},
-        "team2": {"tank": None, "damage": [], "support": []}
-    }
-    for player in free_players:
-        role = player.priority_role
-        if role == 'tank':
-            if lobby["team1"]["tank"] is None:
-                if check_player_status(player, lobby) is False:
-                    lobby["team1"]["tank"] = player
-                    players += 1
-            elif lobby["team2"]["tank"] is None:
-                if check_player_status(player, lobby) is False:
-                    lobby["team2"]["tank"] = player
-                    players += 1
-        if role == 'damage':
-            if len(lobby["team1"]["damage"]) < 2:
-                if check_player_status(player, lobby) is False:
-                    lobby["team1"]["damage"].append(player)
-                    players += 1
-            elif len(lobby["team2"]["damage"]) < 2:
-                if check_player_status(player, lobby) is False:
-                    lobby["team2"]["damage"].append(player)
-                    players += 1
-        if role == 'support':
-            if len(lobby["team1"]["support"]) < 2:
-                if check_player_status(player, lobby) is False:
-                    lobby["team1"]["support"].append(player)
-                    players += 1
-            elif len(lobby["team2"]["support"]) < 2:
-                if check_player_status(player, lobby) is False:
-                    lobby["team2"]["support"].append(player)
-                    players += 1
-        if players == 10:
-            return lobby
-    return False
+    # Добавляем игроков из очереди
+    queued_support = [p for p in queued_players if p.priority_role == "support"]
+    selected.extend(queued_support)
 
+    if len(support) + len(selected) < 4:
+        raise ValueError("Недостаточно игроков на роли Поддержка")
 
-def fill_players_hard(free_players):
-    lobby = {
-        "team1": {"tank": None, "damage": [], "support": []},
-        "team2": {"tank": None, "damage": [], "support": []}
-    }
-    players = 0
-    for player in free_players:
-        if player.tank_rating is not None:
-            if lobby["team1"]["tank"] is None:
-                if check_player_status(player, lobby) is False:
-                    lobby["team1"]["tank"] = player
-                    players += 1
-            elif lobby["team2"]["tank"] is None:
-                if check_player_status(player, lobby) is False:
-                    lobby["team2"]["tank"] = player
-                    players += 1
-        if player.damage_rating is not None:
-            if len(lobby["team1"]["damage"]) < 2:
-                if check_player_status(player, lobby) is False:
-                    lobby["team1"]["damage"].append(player)
-                    players += 1
-            elif len(lobby["team2"]["damage"]) < 2:
-                if check_player_status(player, lobby) is False:
-                    lobby["team2"]["damage"].append(player)
-                    players += 1
-        if player.support_rating is not None:
-            if len(lobby["team1"]["support"]) < 2:
-                if check_player_status(player, lobby) is False:
-                    lobby["team1"]["support"].append(player)
-                    players += 1
-            elif len(lobby["team2"]["support"]) < 2:
-                if check_player_status(player, lobby) is False:
-                    lobby["team2"]["support"].append(player)
-                    players += 1
-        if players == 10:
-            return lobby
-    return False
+    # Заполняем оставшиеся места
+    remaining = [p for p in support if p not in selected]
+    while len(selected) < 4:
+        closest = None
+        min_difference = float('inf')
+        for i, player in enumerate(remaining):
+            diff = sum(abs(player.support_rating - sel.support_rating) for sel in selected)
+            if diff < min_difference:
+                min_difference = diff
+                closest = i
 
+        selected.append(remaining.pop(closest))
 
-def free_current_lobby(lobby, free_players):
-    free_players.append(lobby['team1']['tank'])
-    for player in lobby['team1']['damage']:
-        free_players.append(player)
-    for player in lobby['team1']['support']:
-        free_players.append(player)
-    free_players.append(lobby['team2']['tank'])
-    for player in lobby['team2']['damage']:
-        free_players.append(player)
-    for player in lobby['team2']['support']:
-        free_players.append(player)
-
-
-def select_current_lobby(lobby, free_players):
-    free_players.remove(lobby['team1']['tank'])
-    for player in lobby['team1']['damage']:
-        free_players.remove(player)
-    for player in lobby['team1']['support']:
-        free_players.remove(player)
-    free_players.remove(lobby['team2']['tank'])
-    for player in lobby['team2']['damage']:
-        free_players.remove(player)
-    for player in lobby['team2']['support']:
-        free_players.remove(player)
+    return selected
 
 
 def print_lobby(lobby):
@@ -177,6 +127,26 @@ def print_lobby(lobby):
     print('TEAM 2 SUPPORTS:')
     for player in lobby['team2']['support']:
         print(player.name)
+
+
+def check_lobby_status(lobby):
+    if lobby['team1']['tank'] is None:
+        return False
+    for player in lobby['team1']['damage']:
+        if player is None:
+            return False
+    for player in lobby['team1']['support']:
+        if player is None:
+            return False
+    if lobby['team2']['tank'] is None:
+        return False
+    for player in lobby['team2']['damage']:
+        if player is None:
+            return False
+    for player in lobby['team2']['support']:
+        if player is None:
+            return False
+    return True
 
 
 def check_player_status(client, lobby):
@@ -199,264 +169,56 @@ def check_player_status(client, lobby):
     return False
 
 
-def soft_balance(lobby, free_players, elo):
-    team1_rating, team2_rating, tank1_rating, tank2_rating = sum_rating(lobby)
-    if (abs(team1_rating - team2_rating) <= 300) and (abs(tank1_rating - tank2_rating) <= 300):
-        return True
-    else:
-        if abs(tank1_rating - tank2_rating) > 300:
-            for player in free_players:
-                if player.priority_role == 'tank':
-                    if tank1_rating > tank2_rating:
-                        if player in elo['tank']['high']:
-                            if lobby['team1']['tank'] in elo['tank']['high']:
-                                if check_player_status(player, lobby) is False:
-                                    lobby['team2']['tank'] = player
-                        if check_player_status(player, lobby) is False:
-                            lobby['team1']['tank'] = player
-                    else:
-                        if player in elo['tank']['high']:
-                            if lobby['team2']['tank'] in elo['tank']['high']:
-                                if check_player_status(player, lobby) is False:
-                                    lobby['team1']['tank'] = player
-                        if check_player_status(player, lobby) is False:
-                            lobby['team2']['tank'] = player
-                team1_rating, team2_rating, tank1_rating, tank2_rating = sum_rating(lobby)
-                if abs(tank1_rating - tank2_rating) <= 300:
-                    break
-        if abs(team1_rating - team2_rating) > 300:
-            for player in free_players:
-                if team1_rating > team2_rating:
-                    if player.priority_role == 'damage':
-                        if (lobby['team1']['damage'][0] or lobby['team1']['damage'][1]) in elo['damage']['high']:
-                            if player in elo['damage']['high']:
-                                if check_player_status(player, lobby) is False:
-                                    lobby['team2']['damage'][0] = lobby['team2']['damage'][1]
-                                    lobby['team2']['damage'][0] = player
-                        if check_player_status(player, lobby) is False:
-                            lobby['team1']['damage'][0] = lobby['team1']['damage'][1]
-                            lobby['team1']['damage'][0] = player
-                    if player.priority_role == 'support':
-                        if (lobby['team1']['support'][0] or lobby['team1']['support'][1]) in elo['support']['high']:
-                            if player in elo['support']['high']:
-                                if check_player_status(player, lobby) is False:
-                                    lobby['team2']['support'][0] = lobby['team2']['support'][1]
-                                    lobby['team2']['support'][0] = player
-                        if check_player_status(player, lobby) is False:
-                            lobby['team1']['support'][0] = lobby['team1']['support'][1]
-                            lobby['team1']['support'][0] = player
-                else:
-                    if player.priority_role == 'damage':
-                        if (lobby['team2']['damage'][0] or lobby['team2']['damage'][1]) in elo['damage']['high']:
-                            if player in elo['damage']['high']:
-                                if check_player_status(player, lobby) is False:
-                                    lobby['team1']['damage'][0] = lobby['team2']['damage'][1]
-                                    lobby['team1']['damage'][0] = player
-                        if check_player_status(player, lobby) is False:
-                            lobby['team2']['damage'][0] = lobby['team2']['damage'][1]
-                            lobby['team2']['damage'][0] = player
-                    if player.priority_role == 'support':
-                        if (lobby['team2']['support'][0] or lobby['team2']['support'][1]) in elo['support']['high']:
-                            if player in elo['support']['high']:
-                                if check_player_status(player, lobby) is False:
-                                    lobby['team1']['support'][0] = lobby['team2']['support'][1]
-                                    lobby['team1']['support'][0] = player
-                        if check_player_status(player, lobby) is False:
-                            lobby['team2']['support'][0] = lobby['team2']['support'][1]
-                            lobby['team2']['support'][0] = player
-                team1_rating, team2_rating, tank1_rating, tank2_rating = sum_rating(lobby)
-                if abs(team1_rating - team2_rating) <= 300:
-                    break
-    if (abs(team1_rating - team2_rating) <= 300) and (abs(tank1_rating - tank2_rating) <= 300):
-        return True
-    else:
-        return False
-
-
-def hard_balance(lobby, free_players, elo):
-    team1_rating, team2_rating, tank1_rating, tank2_rating = sum_rating(lobby)
-    if (abs(team1_rating - team2_rating) <= 300) and (abs(tank1_rating - tank2_rating) <= 300):
-        return True
-    else:
-        if abs(tank1_rating - tank2_rating) > 300:
-            for player in free_players:
-                if player.tank_rating is not None:
-                    if tank1_rating > tank2_rating:
-                        if player in elo['tank']['high']:
-                            if lobby['team1']['tank'] in elo['tank']['high']:
-                                if check_player_status(player, lobby) is False:
-                                    lobby['team2']['tank'] = player
-                        if check_player_status(player, lobby) is False:
-                            lobby['team1']['tank'] = player
-                    else:
-                        if player in elo['tank']['high']:
-                            if lobby['team2']['tank'] in elo['tank']['high']:
-                                if check_player_status(player, lobby) is False:
-                                    lobby['team1']['tank'] = player
-                    if check_player_status(player, lobby) is False:
-                        lobby['team2']['tank'] = player
-                team1_rating, team2_rating, tank1_rating, tank2_rating = sum_rating(lobby)
-                if abs(tank1_rating - tank2_rating) <= 300:
-                    break
-        if abs(team1_rating - team2_rating) > 300:
-            for player in free_players:
-                if team1_rating > team2_rating:
-                    if player.damage_rating is not None:
-                        if (lobby['team1']['damage'][0] or lobby['team1']['damage'][1]) in elo['damage']['high']:
-                            if player in elo['damage']['high']:
-                                if check_player_status(player, lobby) is False:
-                                    lobby['team2']['damage'][1] = lobby['team2']['damage'][0]
-                                    lobby['team2']['damage'][0] = player
-                        if check_player_status(player, lobby) is False:
-                            lobby['team1']['damage'][1] = lobby['team1']['damage'][0]
-                            lobby['team1']['damage'][0] = player
-                    if player.support_rating is not None:
-                        if (lobby['team1']['support'][0] or lobby['team1']['support'][1]) in elo['support']['high']:
-                            if player in elo['support']['high']:
-                                if check_player_status(player, lobby) is False:
-                                    lobby['team2']['support'][1] = lobby['team2']['support'][0]
-                                    lobby['team2']['support'][0] = player
-                        if check_player_status(player, lobby) is False:
-                            lobby['team1']['support'][1] = lobby['team1']['support'][0]
-                            lobby['team1']['support'][0] = player
-                else:
-                    if player.damage_rating is not None:
-                        if (lobby['team2']['damage'][0] or lobby['team2']['damage'][1]) in elo['damage']['high']:
-                            if player in elo['damage']['high']:
-                                if check_player_status(player, lobby) is False:
-                                    lobby['team1']['damage'][1] = lobby['team2']['damage'][0]
-                                    lobby['team1']['damage'][0] = player
-                        if check_player_status(player, lobby) is False:
-                            lobby['team2']['damage'][1] = lobby['team2']['damage'][0]
-                            lobby['team2']['damage'][0] = player
-                    if player.support_rating is not None:
-                        if (lobby['team2']['support'][0] or lobby['team2']['support'][1]) in elo['support']['high']:
-                            if player in elo['support']['high']:
-                                if check_player_status(player, lobby) is False:
-                                    lobby['team1']['support'][1] = lobby['team2']['support'][0]
-                                    lobby['team1']['support'][0] = player
-                        if check_player_status(player, lobby) is False:
-                            lobby['team2']['support'][1] = lobby['team2']['support'][0]
-                            lobby['team2']['support'][0] = player
-                team1_rating, team2_rating, tank1_rating, tank2_rating = sum_rating(lobby)
-                if abs(team1_rating - team2_rating) <= 300:
-                    break
-    if (abs(team1_rating - team2_rating) <= 300) and (abs(tank1_rating - tank2_rating) <= 300):
-        return True
-    else:
-        return False
-
-
-def fill_queued_players(lobby, free_players, queued_players):
-    uq_players = []
-    for player in queued_players:
-        if player not in free_players:
-            uq_players.append(player)
-        role = player.priority_role
-        if role == 'tank':
-            for team_name in ["team1", "team2"]:
-                if abs(lobby[team_name]['tank'].tank_rating - player.tank_rating) < 500:
-                    if player in free_players:
-                        old_player = lobby[team_name]['tank']
-                        replace_player(lobby[team_name], 'tank', old_player, player, free_players, uq_players)
-        if role == 'damage':
-            for team_name in ["team1", "team2"]:
-                for team_player in [0, 1]:
-                    if abs(lobby[team_name]['damage'][team_player].damage_rating - player.damage_rating) < 700:
-                        if player in free_players:
-                            old_player = lobby[team_name][role][0]
-                            replace_player(lobby[team_name], role, old_player, player, free_players, uq_players)
-        if role == 'support':
-            for team_name in ["team1", "team2"]:
-                for team_player in [0, 1]:
-                    if abs(lobby[team_name]['support'][team_player].support_rating - player.support_rating) < 700:
-                        if player in free_players:
-                            old_player = lobby[team_name][role][0]
-                            replace_player(lobby[team_name], role, old_player, player, free_players, uq_players)
-    for player in uq_players:
-        queued_players.remove(player)
-    if queued_players:
-        return False
-    else:
-        return True
-
-
-def replace_player(team, role, old_player, new_player, free_players, uq_players):
-    if role == 'tank':
-        team['tank'] = new_player
-        free_players.remove(new_player)
-        uq_players.remove(new_player)
-        free_players.append(old_player)
-    else:
-        free_players.remove(new_player)
-        uq_players.append(new_player)
-        free_players.append(old_player)
-        team[role] = [new_player if player == old_player else player for player in team[role]]
+def select_current_lobby(lobby, free_players, queued_players):
+    free_players.remove(lobby['team1']['tank'])
+    for player in lobby['team1']['damage']:
+        if player in free_players:
+            free_players.remove(player)
+        if player in queued_players:
+            queued_players.remove(player)
+    for player in lobby['team1']['support']:
+        if player in free_players:
+            free_players.remove(player)
+        if player in queued_players:
+            queued_players.remove(player)
+    free_players.remove(lobby['team2']['tank'])
+    for player in lobby['team2']['damage']:
+        if player in free_players:
+            free_players.remove(player)
+        if player in queued_players:
+            queued_players.remove(player)
+    for player in lobby['team2']['support']:
+        if player in free_players:
+            free_players.remove(player)
+        if player in queued_players:
+            queued_players.remove(player)
+    return free_players, queued_players
 
 
 def create_lobbies(lobby_count):
     free_players = get_players()
-    queued_players = []
-    players = session.query(Queue).all()
-    for player in players:
-        queued_players.append(session.query(Player).filter(Player.discord_id == player.discord_id).first())
-    if len(free_players) >= 10 * lobby_count:
-        count = 0
-        lobbies = []
-        trigger = False
-        while count < lobby_count:
-            elo = elo_cleaner()
-            for player in free_players:
-                sort_players(player, elo)
-            if trigger is False:
-                if fill_players_soft(free_players):
-                    lobby = fill_players_soft(free_players)
-                    if soft_balance(lobby, free_players, elo) is True:
-                        lobbies.append(lobby)
-                        count += 1
-                        select_current_lobby(lobby, free_players)
-                    else:
-                        trigger = True
-                        count = 0
-                        for lobby in lobbies:
-                            free_current_lobby(lobby, free_players)
-                        lobbies = []
-                elif fill_players_soft(free_players) is False:
-                    trigger = True
-                    count = 0
-                    for lobby in lobbies:
-                        free_current_lobby(lobby, free_players)
-                    lobbies = []
-            if trigger is True:
-                if fill_players_hard(free_players):
-                    lobby = fill_players_hard(free_players)
-                    if hard_balance(lobby, free_players, elo) is True:
-                        lobbies.append(lobby)
-                        count += 1
-                        select_current_lobby(lobby, free_players)
-                    else:
-                        raise ValueError('Balance not found.')
-                elif fill_players_hard(free_players) is False:
-                    raise ValueError('Not enough free players.')
-        if len(queued_players) <= 10:
-            step = 0
-            for lobby in lobbies:
-                step += 1
-                queue = fill_queued_players(lobby, free_players, queued_players)
-                if len(lobbies) == step and queue is False:
-                    raise ValueError('Cant fill queue players')
-            players = session.query(OldQueue).all()
-            for player in players:
-                session.delete(player)
-            session.commit()
-            players = session.query(Queue).all()
-            for player in players:
-                user = OldQueue(discord_id=player.discord_id)
-                session.add(user)
-            session.commit()
-            for player in players:
-                session.delete(player)
-            session.commit()
-        else:
-            raise 'Queued players more than 10.'
-        return lobbies, free_players
+    queued_players = get_queue()
+    for player in queued_players:
+        free_players.remove(player)
+    lobbies = []
+    for i in range(lobby_count):
+        lobby = {
+            "team1": {"tank": None, "damage": [], "support": []},
+            "team2": {"tank": None, "damage": [], "support": []}
+        }
+        tanks = find_closest_tanks(free_players, queued_players)
+        damage = find_closest_damage(free_players, queued_players)
+        support = find_closest_support(free_players, queued_players)
+        lobby["team1"]["tank"], lobby["team2"]["tank"] = tanks[0], tanks[1]
+        lobby["team1"]["damage"].append(damage[0]), lobby["team2"]["damage"].append(damage[1])
+        lobby["team1"]["damage"].append(damage[2]), lobby["team2"]["damage"].append(damage[3])
+        lobby["team1"]["support"].append(support[0]), lobby["team2"]["support"].append(support[1])
+        lobby["team1"]["support"].append(support[2]), lobby["team2"]["support"].append(support[3])
+        if check_lobby_status(lobby):
+            print_lobby(lobby)
+            free_players, queued_players = select_current_lobby(lobby, free_players, queued_players)
+            lobbies.append(lobby)
+    return lobbies, free_players
+
+
+create_lobbies(4)

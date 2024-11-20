@@ -20,10 +20,4 @@ class Queue(Base):
     discord_id = Column(String, nullable=True)
 
 
-class OldQueue(Base):
-    __tablename__ = 'old_queue'
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    discord_id = Column(String, nullable=True)
-
-
 Base.metadata.create_all(engine)

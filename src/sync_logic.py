@@ -1,7 +1,7 @@
 import random
 from src.balancer import create_lobbies
 from src.config import session
-from src.models import Queue, OldQueue
+from src.models import Queue
 
 rank_to_value = {
     'b5': 1000, 'b4': 1100, 'b3': 1200, 'b2': 1300, 'b1': 1400,
@@ -61,19 +61,6 @@ def lobbies_players(lobbies):
     return active_players
 
 
-def swap_queue():
-    players = session.query(Queue).all()
-    for player in players:
-        session.delete(player)
-    session.commit()
-    players = session.query(OldQueue).all()
-    for player in players:
-        user = Queue(discord_id=player.discord_id)
-        session.add(user)
-    session.commit()
-    print('Old queue was successfully accept.')
-
-
 def create_lobbies_caller(lobby_count):
     queued_players = []
     lobbies = []
@@ -91,7 +78,7 @@ def create_lobbies_caller(lobby_count):
                     session.add(user)
                     session.commit()
                 break
-            if count == 100:
+            if count == 1:
                 raise StopIteration('Balancer cant find players')
     except StopIteration as e:
         print(f"Error: {e}")

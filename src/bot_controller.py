@@ -2,7 +2,7 @@ import discord
 from src.config import bot, BOT_TOKEN, session
 from src.models import Player, Queue
 import re
-from src.sync_logic import convert_rank_to_value, rank_to_value, create_lobbies_caller, get_map, get_rating, swap_queue
+from src.sync_logic import convert_rank_to_value, rank_to_value, create_lobbies_caller, get_map, get_rating
 
 
 class CheckinView(discord.ui.View):
@@ -102,11 +102,6 @@ async def my_rank(ctx):
         await ctx.send(user_rating)
     except Exception as e:
         print(f'Error updating user status: {str(e)}')
-
-
-@bot.command()
-async def repeat(ctx):
-    swap_queue()
 
 
 @bot.command()
@@ -221,6 +216,7 @@ async def update(ctx, tank_rating: str, damage_rating: str, support_rating: str)
 
 # Регулярное выражение для проверки battle_tag (пример: Sacr1ficed#2456)
 BATTLE_TAG_PATTERN = re.compile(r"^[a-zA-Z0-9]+#\d+$")
+
 
 @bot.command()
 async def register(ctx, battle_tag: str, tank_rating: str, damage_rating: str, support_rating: str):
