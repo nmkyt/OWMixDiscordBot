@@ -15,7 +15,7 @@ class CheckinView(discord.ui.View):
         user_id = interaction.user.id
         user_name = interaction.user.name
         await interaction.response.defer()
-        await update_user_status(user_id, 'checked_in', 'yes')
+        await update_user_status(user_id, 'checked_in', 'yes', interaction)
         print(f'User {user_name} successfully checked in.')
         await interaction.followup.send(f"{user_name} успешно прошел чек-ин.", ephemeral=True)
 
@@ -25,7 +25,7 @@ class CheckinView(discord.ui.View):
         user_id = interaction.user.id
         user_name = interaction.user.name
         await interaction.response.defer()
-        await update_user_status(user_id, 'checked_in', 'no')
+        await update_user_status(user_id, 'checked_in', 'no', interaction)
         print(f'User {user_name} successfully checked out.')
         await interaction.followup.send(f"{user_name} успешно прошел чек-аут", ephemeral=True)
 
@@ -35,9 +35,12 @@ class CheckinView(discord.ui.View):
         user_id = interaction.user.id
         user_name = interaction.user.name
         await interaction.response.defer()
-        await update_user_status(user_id, 'priority_role', 'tank')
-        print(f'User {user_name} set priority role as Tank.')
-        await interaction.followup.send(f"{user_name} успешно выбрал танка приоритетной ролью", ephemeral=True)
+        if await update_user_status(user_id, 'priority_role', 'tank', interaction):
+            print(f'User {user_name} set priority role as Tank.')
+            await interaction.followup.send(f"{user_name} успешно выбрал танка приоритетной ролью", ephemeral=True)
+        else:
+            await interaction.followup.send('Чтобы выбрать роль приоритетной, необходимо указать ее рейтинг.')
+            raise Exception("Error updating user status.")
 
     @discord.ui.button(label='🏹 DPS', style=discord.ButtonStyle.gray)
     async def dps(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -45,9 +48,12 @@ class CheckinView(discord.ui.View):
         user_id = interaction.user.id
         user_name = interaction.user.name
         await interaction.response.defer()
-        await update_user_status(user_id, 'priority_role', 'damage')
-        print(f'User {user_name} successfully set priority role as DPS.')
-        await interaction.followup.send(f"{user_name} успешно выбрал урон приоритетной ролью", ephemeral=True)
+        if await update_user_status(user_id, 'priority_role', 'damage', interaction):
+            print(f'User {user_name} successfully set priority role as DPS.')
+            await interaction.followup.send(f"{user_name} успешно выбрал урон приоритетной ролью", ephemeral=True)
+        else:
+            await interaction.followup.send('Чтобы выбрать роль приоритетной, необходимо указать ее рейтинг.')
+            raise Exception("Error updating user status.")
 
     @discord.ui.button(label='💉 Support', style=discord.ButtonStyle.gray)
     async def support(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -55,9 +61,25 @@ class CheckinView(discord.ui.View):
         user_id = interaction.user.id
         user_name = interaction.user.name
         await interaction.response.defer()
-        await update_user_status(user_id, 'priority_role', 'support')
-        print(f'User {user_name} successfully set priority role as Support.')
-        await interaction.followup.send(f"{user_name} успешно выбрал поддержку приоритетной ролью", ephemeral=True)
+        if await update_user_status(user_id, 'priority_role', 'support', interaction):
+            print(f'User {user_name} successfully set priority role as Support.')
+            await interaction.followup.send(f"{user_name} успешно выбрал поддержку приоритетной ролью", ephemeral=True)
+        else:
+            await interaction.followup.send('Чтобы выбрать роль приоритетной, необходимо указать ее рейтинг.')
+            raise Exception("Error updating user status.")
+
+    @discord.ui.button(label='🎲 Flex', style=discord.ButtonStyle.gray)
+    async def flex(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.role = 'flex'
+        user_id = interaction.user.id
+        user_name = interaction.user.name
+        await interaction.response.defer()
+        if await update_user_status(user_id, 'priority_role', 'flex', interaction):
+            print(f'User {user_name} successfully set priority role as Flex.')
+            await interaction.followup.send(f"{user_name} успешно выбрал flex приоритетной ролью", ephemeral=True)
+        else:
+            await interaction.followup.send('Чтобы выбрать роль приоритетной, необходимо указать ее рейтинг.')
+            raise Exception("Error updating user status.")
 
 
 @bot.event
@@ -73,14 +95,40 @@ async def check(ctx):
     await ctx.send('Нажмите ✅ и выберите приоритетную роль. Пожалуйста, нажмите ❌, если покидаете миксы.', view=view)
 
 
-async def update_user_status(user_id, field, value):
+async def update_user_status(user_id, field, value, interaction):
     try:
         user = session.query(Player).filter(Player.discord_id == str(user_id)).first()
         if field == 'checked_in':
             user.check_in = value
         if field == 'priority_role':
-            user.priority_role = value
-            session.commit()
+            if value == 'tank':
+                if user.tank_rating is not None:
+                    user.priority_role = value
+                    session.commit()
+                    return True
+                else:
+                    return False
+            if value == 'damage':
+                if user.damage_rating is not None:
+                    user.priority_role = value
+                    session.commit()
+                    return True
+                else:
+                    return False
+            if value == 'support':
+                if user.support_rating is not None:
+                    user.priority_role = value
+                    session.commit()
+                    return True
+                else:
+                    return False
+            if value == 'flex':
+                if (user.tank_rating and user.damage_rating and user.support_rating) is not None:
+                    user.priority_role = value
+                    session.commit()
+                    return True
+                else:
+                    return False
         session.commit()
     except Exception as e:
         print(f'Error updating user status: {str(e)}')
@@ -178,7 +226,11 @@ async def update(ctx, tank_rating: str, damage_rating: str, support_rating: str)
                     except ValueError as e:
                         await ctx.send(f'Введите корректную команду. Пример: !update 4000, d2, 3700 | {e}')
             else:
-                user.tank_rating = None
+                if user.priority_role != 'tank':
+                    user.tank_rating = None
+                else:
+                    await ctx.send("Вы не можете обнулить рейтинг на роли, которая выбрана приоритетной")
+                    raise Exception("Update Error")
             damage_rating = damage_rating.split(',')[0]
             if damage_rating != '0':
                 if damage_rating in rank_to_value:
@@ -192,7 +244,11 @@ async def update(ctx, tank_rating: str, damage_rating: str, support_rating: str)
                     except ValueError as e:
                         await ctx.send(f'Введите корректную команду. Пример: !update 4000, d2, 3700 | {e}')
             else:
-                user.damage_rating = None
+                if user.priority_role != 'damage':
+                    user.damage_rating = None
+                else:
+                    await ctx.send("Вы не можете обнулить рейтинг на роли, которая выбрана приоритетной")
+                    raise Exception("Update Error")
             support_rating = support_rating.split(',')[0]
             if support_rating != '0':
                 if support_rating in rank_to_value:
@@ -206,7 +262,11 @@ async def update(ctx, tank_rating: str, damage_rating: str, support_rating: str)
                     except ValueError as e:
                         await ctx.send(f'Введите корректную команду. Пример: !update 4000, d2, 3700 | {e}')
             else:
-                user.support_rating = None
+                if user.priority_role != 'support':
+                    user.support_rating = None
+                else:
+                    await ctx.send("Вы не можете обнулить рейтинг на роли, которая выбрана приоритетной")
+                    raise Exception("Update Error")
             session.commit()
             await ctx.send('Вы успешно изменили свой рейтинг')
             print(f'User {username} successfully updated his rating.')

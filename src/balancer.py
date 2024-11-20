@@ -13,26 +13,32 @@ def get_queue():
     queued_players = session.query(Queue).all()
     free_players = get_players()
     queue = []
-    for player_queue in queued_players:
-        for player_free in free_players:
-            if player_queue.discord_id == player_free.discord_id:
-                queue.append(player_free)
-    return queue
+    if queued_players:
+        for player_queue in queued_players:
+            for player_free in free_players:
+                if player_queue.discord_id == player_free.discord_id:
+                    queue.append(player_free)
+                    free_players.remove(player_free)
+    session.query(Queue).delete()
+    session.commit()
+    return queue, free_players
 
 
 def find_closest_tanks(free_players, queued_players):
     """
     Находит двух ближайших игроков на роли 'Танк', включая queued_players.
     """
-    tanks = [p for p in free_players if p.priority_role == "tank"]
+    tanks = [p for p in free_players if p.priority_role == "tank" or p.priority_role == "flex"]
     selected = []
 
     # Добавляем игроков из очереди, если они есть
-    queued_tanks = [p for p in queued_players if p.priority_role == "tank"]
+    queued_tanks = [p for p in queued_players if p.priority_role == "tank" or p.priority_role == "flex"]
     selected.extend(queued_tanks)
 
     if len(tanks) + len(selected) < 2:
-        raise ValueError("Недостаточно игроков на роли Танк")
+        tanks = [p for p in free_players if p.tank_rating is not None]
+        if len(tanks) + len(selected) < 2:
+            raise ValueError("Недостаточно игроков на роли Танк")
 
     # Заполняем оставшиеся места методом перебора
     min_difference = float('inf')
@@ -47,22 +53,30 @@ def find_closest_tanks(free_players, queued_players):
                 closest_pair = [tanks[i], tanks[j]]
 
     selected.extend(closest_pair[: 2 - len(selected)])
-    return selected
+
+    for player in selected:
+        if player in free_players:
+            free_players.remove(player)
+        if player in queued_players:
+            queued_players.remove(player)
+    return selected, free_players, queued_players
 
 
 def find_closest_damage(free_players, queued_players):
     """
     Находит четырех ближайших игроков на роли 'Урон', включая queued_players.
     """
-    damage = [p for p in free_players if p.priority_role == "damage"]
+    damage = [p for p in free_players if p.priority_role == "damage" or p.priority_role == "flex"]
     selected = []
 
     # Добавляем игроков из очереди
-    queued_damage = [p for p in queued_players if p.priority_role == "damage"]
+    queued_damage = [p for p in queued_players if p.priority_role == "damage" or p.priority_role == "flex"]
     selected.extend(queued_damage)
 
     if len(damage) + len(selected) < 4:
-        raise ValueError("Недостаточно игроков на роли Урон")
+        damage = [p for p in free_players if p.damage_rating is not None]
+        if len(damage) + len(selected) < 4:
+            raise ValueError("Недостаточно игроков на роли Урон")
 
     # Заполняем оставшиеся места
     remaining = [p for p in damage if p not in selected]
@@ -77,22 +91,29 @@ def find_closest_damage(free_players, queued_players):
 
         selected.append(remaining.pop(closest))
 
-    return selected
+    for player in selected:
+        if player in free_players:
+            free_players.remove(player)
+        if player in queued_players:
+            queued_players.remove(player)
+    return selected, free_players, queued_players
 
 
-def find_closest_support(players, queued_players):
+def find_closest_support(free_players, queued_players):
     """
     Находит четырех ближайших игроков на роли 'Поддержка', включая queued_players.
     """
-    support = [p for p in players if p.priority_role == "support"]
+    support = [p for p in free_players if p.priority_role == "support" or p.priority_role == "flex"]
     selected = []
 
     # Добавляем игроков из очереди
-    queued_support = [p for p in queued_players if p.priority_role == "support"]
+    queued_support = [p for p in queued_players if p.priority_role == "support" or p.priority_role == "flex"]
     selected.extend(queued_support)
 
     if len(support) + len(selected) < 4:
-        raise ValueError("Недостаточно игроков на роли Поддержка")
+        support = [p for p in free_players if p.support_rating is not None]
+        if len(support) + len(selected) < 4:
+            raise ValueError("Недостаточно игроков на роли Урон")
 
     # Заполняем оставшиеся места
     remaining = [p for p in support if p not in selected]
@@ -107,7 +128,12 @@ def find_closest_support(players, queued_players):
 
         selected.append(remaining.pop(closest))
 
-    return selected
+    for player in selected:
+        if player in free_players:
+            free_players.remove(player)
+        if player in queued_players:
+            queued_players.remove(player)
+    return selected, free_players, queued_players
 
 
 def print_lobby(lobby):
@@ -196,29 +222,23 @@ def select_current_lobby(lobby, free_players, queued_players):
 
 
 def create_lobbies(lobby_count):
-    free_players = get_players()
-    queued_players = get_queue()
-    for player in queued_players:
-        free_players.remove(player)
+    queued_players, free_players = get_queue()
+    if len(queued_players) >= 10:
+        raise ValueError("Количество игроков в очереди превышает 10.")
     lobbies = []
     for i in range(lobby_count):
         lobby = {
             "team1": {"tank": None, "damage": [], "support": []},
             "team2": {"tank": None, "damage": [], "support": []}
         }
-        tanks = find_closest_tanks(free_players, queued_players)
-        damage = find_closest_damage(free_players, queued_players)
-        support = find_closest_support(free_players, queued_players)
+        tanks, free_players, queued_players = find_closest_tanks(free_players, queued_players)
+        damage, free_players, queued_players = find_closest_damage(free_players, queued_players)
+        support, free_players, queued_players = find_closest_support(free_players, queued_players)
         lobby["team1"]["tank"], lobby["team2"]["tank"] = tanks[0], tanks[1]
         lobby["team1"]["damage"].append(damage[0]), lobby["team2"]["damage"].append(damage[1])
         lobby["team1"]["damage"].append(damage[2]), lobby["team2"]["damage"].append(damage[3])
         lobby["team1"]["support"].append(support[0]), lobby["team2"]["support"].append(support[1])
         lobby["team1"]["support"].append(support[2]), lobby["team2"]["support"].append(support[3])
         if check_lobby_status(lobby):
-            print_lobby(lobby)
-            free_players, queued_players = select_current_lobby(lobby, free_players, queued_players)
             lobbies.append(lobby)
     return lobbies, free_players
-
-
-create_lobbies(4)
