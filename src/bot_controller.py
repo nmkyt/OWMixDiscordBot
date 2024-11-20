@@ -2,7 +2,7 @@ import discord
 from src.config import bot, BOT_TOKEN, session
 from src.models import Player, Queue
 import re
-from src.sync_logic import convert_rank_to_value, rank_to_value, create_lobbies_caller, get_map, get_rating
+from src.sync_logic import convert_rank_to_value, rank_to_value, create_lobbies_caller, get_map, get_rating, check_queue
 
 
 class CheckinView(discord.ui.View):
@@ -15,7 +15,7 @@ class CheckinView(discord.ui.View):
         user_id = interaction.user.id
         user_name = interaction.user.name
         await interaction.response.defer()
-        await update_user_status(user_id, 'checked_in', 'yes', interaction)
+        await update_user_status(user_id, 'checked_in', 'yes')
         print(f'User {user_name} successfully checked in.')
         await interaction.followup.send(f"{user_name} успешно прошел чек-ин.", ephemeral=True)
 
@@ -25,7 +25,7 @@ class CheckinView(discord.ui.View):
         user_id = interaction.user.id
         user_name = interaction.user.name
         await interaction.response.defer()
-        await update_user_status(user_id, 'checked_in', 'no', interaction)
+        await update_user_status(user_id, 'checked_in', 'no')
         print(f'User {user_name} successfully checked out.')
         await interaction.followup.send(f"{user_name} успешно прошел чек-аут", ephemeral=True)
 
@@ -35,7 +35,7 @@ class CheckinView(discord.ui.View):
         user_id = interaction.user.id
         user_name = interaction.user.name
         await interaction.response.defer()
-        if await update_user_status(user_id, 'priority_role', 'tank', interaction):
+        if await update_user_status(user_id, 'priority_role', 'tank'):
             print(f'User {user_name} set priority role as Tank.')
             await interaction.followup.send(f"{user_name} успешно выбрал танка приоритетной ролью", ephemeral=True)
         else:
@@ -48,7 +48,7 @@ class CheckinView(discord.ui.View):
         user_id = interaction.user.id
         user_name = interaction.user.name
         await interaction.response.defer()
-        if await update_user_status(user_id, 'priority_role', 'damage', interaction):
+        if await update_user_status(user_id, 'priority_role', 'damage'):
             print(f'User {user_name} successfully set priority role as DPS.')
             await interaction.followup.send(f"{user_name} успешно выбрал урон приоритетной ролью", ephemeral=True)
         else:
@@ -61,7 +61,7 @@ class CheckinView(discord.ui.View):
         user_id = interaction.user.id
         user_name = interaction.user.name
         await interaction.response.defer()
-        if await update_user_status(user_id, 'priority_role', 'support', interaction):
+        if await update_user_status(user_id, 'priority_role', 'support'):
             print(f'User {user_name} successfully set priority role as Support.')
             await interaction.followup.send(f"{user_name} успешно выбрал поддержку приоритетной ролью", ephemeral=True)
         else:
@@ -74,11 +74,11 @@ class CheckinView(discord.ui.View):
         user_id = interaction.user.id
         user_name = interaction.user.name
         await interaction.response.defer()
-        if await update_user_status(user_id, 'priority_role', 'flex', interaction):
+        if await update_user_status(user_id, 'priority_role', 'flex'):
             print(f'User {user_name} successfully set priority role as Flex.')
             await interaction.followup.send(f"{user_name} успешно выбрал flex приоритетной ролью", ephemeral=True)
         else:
-            await interaction.followup.send('Чтобы выбрать роль приоритетной, необходимо указать ее рейтинг.')
+            await interaction.followup.send('Чтобы выбрать флекс, необходимо указать рейтинг на всех ролях.')
             raise Exception("Error updating user status.")
 
 
@@ -95,7 +95,45 @@ async def check(ctx):
     await ctx.send('Нажмите ✅ и выберите приоритетную роль. Пожалуйста, нажмите ❌, если покидаете миксы.', view=view)
 
 
-async def update_user_status(user_id, field, value, interaction):
+@bot.command()
+async def queue(ctx):
+    queued_players = check_queue()
+    await ctx.send(f'{queued_players}')
+
+
+@bot.command()
+async def queue_add(ctx, discord_id):
+    try:
+        user = Queue(discord_id=discord_id)
+        session.add(user)
+        session.commit()
+    except Exception as e:
+        print(f'Error updating user status: {str(e)}')
+    await ctx.send("Пользователь успешно добавлен в очередь")
+
+
+@bot.command()
+async def queue_remove(ctx, discord_id):
+    try:
+        user = session.query(Queue).filter(Queue.discord_id == f'{discord_id}').first()
+        session.delete(user)
+        session.commit()
+    except Exception as e:
+        print(f'Error updating user status: {str(e)}')
+    await ctx.send("Пользователь успешно убран из очереди")
+
+
+@bot.command()
+async def queue_clear(ctx):
+    try:
+        session.query(Queue).delete()
+        session.commit()
+    except Exception as e:
+        print(f'Error updating user status: {str(e)}')
+    await ctx.send("Очередь успешно очищена")
+
+
+async def update_user_status(user_id, field, value):
     try:
         user = session.query(Player).filter(Player.discord_id == str(user_id)).first()
         if field == 'checked_in':
@@ -315,6 +353,15 @@ async def register(ctx, battle_tag: str, tank_rating: str, damage_rating: str, s
         await ctx.send(f'Введите корректную команду. Пример: !register Sacr1ficed#2456, 4000, d2, 3700 | {e}')
         return
 
+    priority = ''
+
+    if tank_rating != 0:
+        priority = 'tank'
+    elif damage_rating != 0:
+        priority = 'damage'
+    elif support_rating != 0:
+        priority = 'support'
+
     # Регистрируем пользователя
     username = battle_tag.split('#')[0]
     user_info = Player(
@@ -322,7 +369,7 @@ async def register(ctx, battle_tag: str, tank_rating: str, damage_rating: str, s
         tank_rating=tank_rating,
         damage_rating=damage_rating,
         support_rating=support_rating,
-        priority_role='tank',
+        priority_role=priority,
         discord_id=str(discord_id)
     )
     session.add(user_info)

@@ -1,7 +1,7 @@
 import random
 from src.balancer import create_lobbies
 from src.config import session
-from src.models import Queue
+from src.models import Queue, Player
 
 rank_to_value = {
     'b5': 1000, 'b4': 1100, 'b3': 1200, 'b2': 1300, 'b1': 1400,
@@ -34,6 +34,17 @@ def convert_rank_to_value(rank: str) -> int:
         raise ValueError("Invalid rank")
 
 
+def check_queue():
+    queue = []
+    queued_players = session.query(Queue).all()
+    players = session.query(Player).all()
+    for player in players:
+        for queued in queued_players:
+            if queued.discord_id == player.discord_id:
+                queue.append(player.name)
+    return queue
+
+
 def get_rating(lobby):
     team1_rating = (sum(player.tank_rating for player in [lobby["team1"]["tank"]] if player) +
                    sum(player.damage_rating for player in lobby["team1"]["damage"]) +
@@ -42,44 +53,21 @@ def get_rating(lobby):
                    sum(player.damage_rating for player in lobby["team2"]["damage"]) +
                    sum(player.support_rating for player in lobby["team2"]["support"]))
     match_rating = (team1_rating + team2_rating) / 10
-    return abs(team1_rating / 5 - team2_rating / 5), match_rating
-
-
-def lobbies_players(lobbies):
-    active_players = []
-    for lobby in lobbies:
-        active_players.append(lobby['team1']['tank'].discord_id)
-        active_players.append(lobby['team2']['tank'].discord_id)
-        for player in lobby['team1']['damage']:
-            active_players.append(player.discord_id)
-        for player in lobby['team2']['damage']:
-            active_players.append(player.discord_id)
-        for player in lobby['team1']['support']:
-            active_players.append(player.discord_id)
-        for player in lobby['team2']['support']:
-            active_players.append(player.discord_id)
-    return active_players
+    return abs(team1_rating - team2_rating) / 5, match_rating
 
 
 def create_lobbies_caller(lobby_count):
     queued_players = []
     lobbies = []
-    count = 0
     try:
-        while True:
-            count += 1
-            try:
-                lobbies, queued_players = create_lobbies(lobby_count)
-            except ValueError as e:
-                print(f"Error: {e}")
-            if len(lobbies) == lobby_count:
-                for player in queued_players:
-                    user = Queue(discord_id=player.discord_id)
-                    session.add(user)
-                    session.commit()
-                break
-            if count == 1:
-                raise StopIteration('Balancer cant find players')
+        lobbies, queued_players = create_lobbies(lobby_count)
+        if len(lobbies) == lobby_count:
+            for player in queued_players:
+                user = Queue(discord_id=player.discord_id)
+                session.add(user)
+                session.commit()
+        else:
+            raise StopIteration('Balancer cant find players')
     except StopIteration as e:
         print(f"Error: {e}")
     return lobbies, queued_players

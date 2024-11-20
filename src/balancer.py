@@ -136,25 +136,6 @@ def find_closest_support(free_players, queued_players):
     return selected, free_players, queued_players
 
 
-def print_lobby(lobby):
-    print('TEAM 1 TANK:')
-    print(lobby['team1']['tank'].name)
-    print('TEAM 1 DPSES:')
-    for player in lobby['team1']['damage']:
-        print(player.name)
-    print('TEAM 1 SUPPORTS:')
-    for player in lobby['team1']['support']:
-        print(player.name)
-    print('TEAM 2 TANK:')
-    print(lobby['team2']['tank'].name)
-    print('TEAM 2 DPSES:')
-    for player in lobby['team2']['damage']:
-        print(player.name)
-    print('TEAM 2 SUPPORTS:')
-    for player in lobby['team2']['support']:
-        print(player.name)
-
-
 def check_lobby_status(lobby):
     if lobby['team1']['tank'] is None:
         return False
@@ -175,54 +156,10 @@ def check_lobby_status(lobby):
     return True
 
 
-def check_player_status(client, lobby):
-    if client == lobby['team1']['tank']:
-        return True
-    for player in lobby['team1']['damage']:
-        if client == player:
-            return True
-    for player in lobby['team1']['support']:
-        if client == player:
-            return True
-    if client == lobby['team2']['tank']:
-        return True
-    for player in lobby['team2']['damage']:
-        if client == player:
-            return True
-    for player in lobby['team2']['support']:
-        if client == player:
-            return True
-    return False
-
-
-def select_current_lobby(lobby, free_players, queued_players):
-    free_players.remove(lobby['team1']['tank'])
-    for player in lobby['team1']['damage']:
-        if player in free_players:
-            free_players.remove(player)
-        if player in queued_players:
-            queued_players.remove(player)
-    for player in lobby['team1']['support']:
-        if player in free_players:
-            free_players.remove(player)
-        if player in queued_players:
-            queued_players.remove(player)
-    free_players.remove(lobby['team2']['tank'])
-    for player in lobby['team2']['damage']:
-        if player in free_players:
-            free_players.remove(player)
-        if player in queued_players:
-            queued_players.remove(player)
-    for player in lobby['team2']['support']:
-        if player in free_players:
-            free_players.remove(player)
-        if player in queued_players:
-            queued_players.remove(player)
-    return free_players, queued_players
-
-
 def create_lobbies(lobby_count):
     queued_players, free_players = get_queue()
+    if (lobby_count * 10) > (len(queued_players) + len(free_players)):
+        raise ValueError("Количество лобби превышает количество игроков")
     if len(queued_players) >= 10:
         raise ValueError("Количество игроков в очереди превышает 10.")
     lobbies = []
