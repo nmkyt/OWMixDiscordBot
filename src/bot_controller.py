@@ -2,7 +2,7 @@ import discord
 from src.config import bot, BOT_TOKEN, session
 from src.models import Player, Queue
 import re
-from src.sync_logic import convert_rank_to_value, rank_to_value, create_lobbies_caller, get_map, get_rating, check_queue
+from src.sync_logic import convert_rank_to_value, rank_to_value, create_lobbies_caller, get_map, get_rating, check_queue, active_players, end
 
 
 class CheckinView(discord.ui.View):
@@ -85,6 +85,9 @@ class CheckinView(discord.ui.View):
 @bot.event
 async def on_ready():
     print(f'Logged in as {bot.user.name}')
+    print('OW2 Mix Bot v1.0')
+    print('Developed by nmkyt')
+    print('Command list available at !mix_help in Discord app')
 
 
 @bot.command()
@@ -93,6 +96,21 @@ async def check(ctx):
     await ctx.send(
         'Чекин на миксы начался! Обратите внимание, что пройти check-in могут только зарегистрированные игроки.')
     await ctx.send('Нажмите ✅ и выберите приоритетную роль. Пожалуйста, нажмите ❌, если покидаете миксы.', view=view)
+
+
+@bot.command()
+async def mix_help(ctx):
+    await ctx.send(f"--------------------------------**Список команд**--------------------------------\n"
+                   f"• Для регистрации в боте используйте **«!registration BattleTag TankRating DPSRating, "
+                   f"SupportRating»**\n"
+                   f"где Tank, DPS и Support Rating - цифра или дивизион вашего рейтинга в OW2. пр. 2700, g4 итп.\n"
+                   f"• Для обновления своего рейтинга используйте **«!update TankRating DPSRating SupportRating»**\n"
+                   f"• Для того, чтобы узнать свой рейтинг в боте используйте **«!my_rank»**\n"
+                   f"• Для проведения чек-ина используйте команду **«!check»**\n"
+                   f"• Для просмотра очереди на след. игру используйте **«!queue»**\n"
+                   f"• Для очистки очереди используйте **«!queue_clear»**\n"
+                   f"• Для добавления игрока в очередь используйте **«!queue_add discord_id»**\n"
+                   f"• Для удаления игрока из очереди используйте **«!queue_remove discord_id»**\n")
 
 
 @bot.command()
@@ -108,6 +126,7 @@ async def queue_add(ctx, discord_id):
         session.add(user)
         session.commit()
     except Exception as e:
+        session.rollback()
         print(f'Error updating user status: {str(e)}')
     await ctx.send("Пользователь успешно добавлен в очередь")
 
@@ -119,6 +138,7 @@ async def queue_remove(ctx, discord_id):
         session.delete(user)
         session.commit()
     except Exception as e:
+        session.rollback()
         print(f'Error updating user status: {str(e)}')
     await ctx.send("Пользователь успешно убран из очереди")
 
@@ -129,8 +149,20 @@ async def queue_clear(ctx):
         session.query(Queue).delete()
         session.commit()
     except Exception as e:
+        session.rollback()
         print(f'Error updating user status: {str(e)}')
     await ctx.send("Очередь успешно очищена")
+
+
+@bot.command()
+async def players(ctx):
+    await ctx.send(f"{active_players()}")
+
+
+@bot.command()
+async def mix_stop(ctx):
+    end()
+    await ctx.send("Все игроки переведены в неактивный статус.")
 
 
 async def update_user_status(user_id, field, value):
@@ -169,6 +201,7 @@ async def update_user_status(user_id, field, value):
                     return False
         session.commit()
     except Exception as e:
+        session.rollback()
         print(f'Error updating user status: {str(e)}')
 
 
@@ -187,6 +220,7 @@ async def my_rank(ctx):
             user_rating = user_rating + f'Рейтинг на саппотрах: {user.support_rating}'
         await ctx.send(user_rating)
     except Exception as e:
+        session.rollback()
         print(f'Error updating user status: {str(e)}')
 
 
@@ -239,9 +273,13 @@ async def user_update(ctx, user_id: str, tank_rating, damage_rating, support_rat
                             await ctx.send(f'Введите корректную команду. Пример: !update 4000, d2, 3700 | {e}')
                 else:
                     user.support_rating = None
-                session.commit()
-                await ctx.send(f'nmkyt обновил рейтинг у {username}.')
-                print(f'nmkyt successfully update rating of {username}.')
+                try:
+                    session.commit()
+                    await ctx.send(f'nmkyt обновил рейтинг у {username}.')
+                    print(f'nmkyt successfully update rating of {username}.')
+                except Exception as e:
+                    session.rollback()
+                    print(f'Error updating user status: {str(e)}')
 
 
 @bot.command()
@@ -264,7 +302,7 @@ async def update(ctx, tank_rating: str, damage_rating: str, support_rating: str)
                     except ValueError as e:
                         await ctx.send(f'Введите корректную команду. Пример: !update 4000, d2, 3700 | {e}')
             else:
-                if user.priority_role != 'tank':
+                if user.priority_role != ('tank' and 'flex'):
                     user.tank_rating = None
                 else:
                     await ctx.send("Вы не можете обнулить рейтинг на роли, которая выбрана приоритетной")
@@ -282,7 +320,7 @@ async def update(ctx, tank_rating: str, damage_rating: str, support_rating: str)
                     except ValueError as e:
                         await ctx.send(f'Введите корректную команду. Пример: !update 4000, d2, 3700 | {e}')
             else:
-                if user.priority_role != 'damage':
+                if user.priority_role != ('damage' and 'flex'):
                     user.damage_rating = None
                 else:
                     await ctx.send("Вы не можете обнулить рейтинг на роли, которая выбрана приоритетной")
@@ -300,14 +338,19 @@ async def update(ctx, tank_rating: str, damage_rating: str, support_rating: str)
                     except ValueError as e:
                         await ctx.send(f'Введите корректную команду. Пример: !update 4000, d2, 3700 | {e}')
             else:
-                if user.priority_role != 'support':
+                if user.priority_role != ('support' and 'flex'):
                     user.support_rating = None
                 else:
                     await ctx.send("Вы не можете обнулить рейтинг на роли, которая выбрана приоритетной")
                     raise Exception("Update Error")
-            session.commit()
-            await ctx.send('Вы успешно изменили свой рейтинг')
-            print(f'User {username} successfully updated his rating.')
+            try:
+                session.commit()
+                await ctx.send('Вы успешно изменили свой рейтинг')
+                print(f'User {username} successfully updated his rating.')
+            except Exception as e:
+                session.rollback()
+                print(f'{e}')
+                await ctx.send(f"Введите корректную команду")
     else:
         await ctx.send('Вы не зарегистрированы в системе. Используйте !register для регистрации.')
 
@@ -373,7 +416,12 @@ async def register(ctx, battle_tag: str, tank_rating: str, damage_rating: str, s
         discord_id=str(discord_id)
     )
     session.add(user_info)
-    session.commit()
+    try:
+        session.commit()
+    except Exception as e:
+        await ctx.send('Ошибка регистрации пользователя')
+        session.rollback()
+        print(f'{e}')
 
     print(f'User {username} successfully registered.')
     await ctx.send('Вы успешно зарегистрировались на миксы')

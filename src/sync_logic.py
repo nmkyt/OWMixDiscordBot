@@ -45,6 +45,20 @@ def check_queue():
     return queue
 
 
+def active_players():
+    active = []
+    players = session.query(Player).filter(Player.check_in == 'yes').all()
+    for player in players:
+        active.append(player.name)
+    return active, len(active)
+
+
+def end():
+    players = session.query(Player).all()
+    for player in players:
+        player.check_in = 'no'
+
+
 def get_rating(lobby):
     team1_rating = (sum(player.tank_rating for player in [lobby["team1"]["tank"]] if player) +
                    sum(player.damage_rating for player in lobby["team1"]["damage"]) +
