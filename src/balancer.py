@@ -22,7 +22,8 @@ def init_history():
     global RECENT_PAIRS, GAME_INDEX
     if os.path.exists(HISTORY_FILE):
         try:
-            data = json.load(open(HISTORY_FILE, "r", encoding="utf-8"))
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
             RECENT_PAIRS = data.get("pairs", {})
             GAME_INDEX = int(data.get("game_index", 0))
         except Exception as e:
@@ -33,9 +34,14 @@ def init_history():
 
 
 def save_history():
-    json.dump({"pairs": RECENT_PAIRS, "game_index": GAME_INDEX},
-              open(HISTORY_FILE, "w", encoding="utf-8"),
-              ensure_ascii=False)
+    """Анти-повтор — вспомогательная функция; сбой записи файла истории (диск, права
+    доступа, антивирус и т.п.) не должен мешать созданию лобби, поэтому не пробрасываем
+    исключение наружу, только логируем."""
+    try:
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump({"pairs": RECENT_PAIRS, "game_index": GAME_INDEX}, f, ensure_ascii=False)
+    except OSError as e:
+        logger.error(f'Failed to save history file: {e}')
 
 
 def pair_penalty(p1, p2, as_mates=True):
@@ -53,6 +59,12 @@ def pair_penalty(p1, p2, as_mates=True):
         if 0 <= age < WINDOW_GAMES:
             pen += (WINDOW_GAMES - age)
     return pen
+
+
+def _group_penalty(a, b):
+    """Суммарный штраф за пару без знания, окажутся ли они тиммейтами или соперниками —
+    используется на этапе отбора состава лобби, когда команды ещё не разделены."""
+    return ALPHA_TEAMMATE * pair_penalty(a, b, as_mates=True) + ALPHA_OPPONENT * pair_penalty(a, b, as_mates=False)
 
 
 def update_history_with_lobby(lobby):
@@ -117,47 +129,44 @@ def get_queue():
 
 
 def find_closest_tanks(free_players, queued_players):
-    """ Находит двух ближайших игроков на роли 'Танк', включая queued_players. """
-    tanks = [p for p in free_players if p.priority_role in ("tank", "flex")]
-    selected = []
-
-    # queued первыми
-    queued_tanks = [p for p in queued_players if p.priority_role in ("tank", "flex")]
-    selected.extend(queued_tanks)
+    """ Находит двух ближайших игроков на роли 'Танк', включая queued_players (не более 2). """
+    # rating is not None — доп. защита от рассинхрона данных (приоритетная роль выбрана,
+    # а рейтинг на ней не указан): без неё abs(None - x) уронит подбор лобби.
+    tanks = [p for p in free_players if p.priority_role in ("tank", "flex") and p.tank_rating is not None]
+    queued_tanks = [p for p in queued_players
+                    if p.priority_role in ("tank", "flex") and p.tank_rating is not None][:2]
+    selected = list(queued_tanks)
 
     if len(tanks) + len(selected) < 2:
         tanks = [p for p in free_players if p.tank_rating is not None]
     if len(tanks) + len(selected) < 2:
         raise ValueError("Недостаточно игроков на роли Танк")
 
-    min_cost, best_pair = float('inf'), None
     cand = [p for p in tanks if p not in selected]
-    for i in range(len(cand)):
-        for j in range(i + 1, len(cand)):
-            a, b = cand[i], cand[j]
-            diff = abs(a.tank_rating - b.tank_rating)
-            penalty_mates = pair_penalty(a, b, as_mates=True)
-            penalty_foes = pair_penalty(a, b, as_mates=False)
-            cost = diff + ALPHA_TEAMMATE * penalty_mates + ALPHA_OPPONENT * penalty_foes
-            if cost < min_cost:
-                min_cost, best_pair = cost, [a, b]
+    needed = 2 - len(selected)
 
-    if len(selected) == 1:
-        best = None
-        min_cost = float('inf')
-        for p in cand:
-            if p == selected[0]:
-                continue
-            diff = abs(p.tank_rating - selected[0].tank_rating)
-            cost = diff + ALPHA_TEAMMATE * pair_penalty(p, selected[0], True) + ALPHA_OPPONENT * pair_penalty(p, selected[0], False)
-            if cost < min_cost:
-                min_cost, best = cost, p
-        if best:
-            selected.append(best)
-    else:
+    if needed == 2:
+        best_pair, min_cost = None, float('inf')
+        for i in range(len(cand)):
+            for j in range(i + 1, len(cand)):
+                a, b = cand[i], cand[j]
+                diff = abs(a.tank_rating - b.tank_rating)
+                cost = diff + _group_penalty(a, b)
+                if cost < min_cost:
+                    min_cost, best_pair = cost, (a, b)
         if best_pair is None:
             raise ValueError("Недостаточно игроков на роли Танк для формирования пары")
-        selected.extend(best_pair[: 2 - len(selected)])
+        selected.extend(best_pair)
+    elif needed == 1:
+        best, min_cost = None, float('inf')
+        for p in cand:
+            diff = abs(p.tank_rating - selected[0].tank_rating)
+            cost = diff + _group_penalty(p, selected[0])
+            if cost < min_cost:
+                min_cost, best = cost, p
+        if best is None:
+            raise ValueError("Недостаточно игроков на роли Танк для пары")
+        selected.append(best)
 
     for player in list(selected):
         if player in free_players:
@@ -167,33 +176,32 @@ def find_closest_tanks(free_players, queued_players):
     return selected, free_players, queued_players
 
 
-def _greedy_pick_with_penalties(role_players, selected, rating_attr):
+def _greedy_pick_with_penalties(role_players, selected, rating_attr, extra_penalty_against=()):
     """
     Добирает следующего игрока, минимизируя:
-        sum |rating(candidate) - rating(sel)| + ALPHA*(штрафы за недавние пары с каждым sel)
+        sum |rating(candidate) - rating(sel)| + ALPHA*(штрафы за недавние пары)
+    Штраф за повтор считается не только против уже выбранных на эту же роль (selected),
+    но и против игроков, уже закреплённых в этом лобби на других ролях (extra_penalty_against) —
+    иначе повтор состава ловится только внутри одной роли и не ловится, например,
+    между танком и саппортом, которые недавно играли вместе.
     """
+    penalty_pool = list(selected) + list(extra_penalty_against)
     best_idx, best_cost = None, float('inf')
     for i, candidate in enumerate(role_players):
-        diff_sum = 0
-        pen_sum = 0
-        for s in selected:
-            r_c = getattr(candidate, rating_attr)
-            r_s = getattr(s, rating_attr)
-            diff_sum += abs(r_c - r_s)
-            pen_sum += ALPHA_TEAMMATE * pair_penalty(candidate, s, True) + ALPHA_OPPONENT * pair_penalty(candidate, s, False)
+        diff_sum = sum(abs(getattr(candidate, rating_attr) - getattr(s, rating_attr)) for s in selected)
+        pen_sum = sum(_group_penalty(candidate, s) for s in penalty_pool)
         cost = diff_sum + pen_sum
         if cost < best_cost:
             best_cost, best_idx = cost, i
     return best_idx
 
 
-def find_closest_damage(free_players, queued_players):
-    """ Находит четырех ближайших игроков на роли 'Урон', включая queued_players, c анти-повторами. """
-    damage = [p for p in free_players if p.priority_role in ("damage", "flex")]
-    selected = []
-
-    queued_damage = [p for p in queued_players if p.priority_role in ("damage", "flex")]
-    selected.extend(queued_damage)
+def find_closest_damage(free_players, queued_players, lobby_so_far=()):
+    """ Находит четырех ближайших игроков на роли 'Урон', включая queued_players (не более 4), c анти-повторами. """
+    damage = [p for p in free_players if p.priority_role in ("damage", "flex") and p.damage_rating is not None]
+    queued_damage = [p for p in queued_players
+                      if p.priority_role in ("damage", "flex") and p.damage_rating is not None][:4]
+    selected = list(queued_damage)
 
     if len(damage) + len(selected) < 4:
         damage = [p for p in free_players if p.damage_rating is not None]
@@ -202,7 +210,9 @@ def find_closest_damage(free_players, queued_players):
 
     remaining = [p for p in damage if p not in selected]
     while len(selected) < 4:
-        idx = _greedy_pick_with_penalties(remaining, selected, "damage_rating")
+        idx = _greedy_pick_with_penalties(remaining, selected, "damage_rating", lobby_so_far)
+        if idx is None:
+            raise ValueError("Недостаточно игроков на роли Урон")
         selected.append(remaining.pop(idx))
 
     for player in list(selected):
@@ -213,13 +223,12 @@ def find_closest_damage(free_players, queued_players):
     return selected, free_players, queued_players
 
 
-def find_closest_support(free_players, queued_players):
-    """ Находит четырех ближайших игроков на роли 'Поддержка', включая queued_players, c анти-повторами. """
-    support = [p for p in free_players if p.priority_role in ("support", "flex")]
-    selected = []
-
-    queued_support = [p for p in queued_players if p.priority_role in ("support", "flex")]
-    selected.extend(queued_support)
+def find_closest_support(free_players, queued_players, lobby_so_far=()):
+    """ Находит четырех ближайших игроков на роли 'Поддержка', включая queued_players (не более 4), c анти-повторами. """
+    support = [p for p in free_players if p.priority_role in ("support", "flex") and p.support_rating is not None]
+    queued_support = [p for p in queued_players
+                       if p.priority_role in ("support", "flex") and p.support_rating is not None][:4]
+    selected = list(queued_support)
 
     if len(support) + len(selected) < 4:
         support = [p for p in free_players if p.support_rating is not None]
@@ -228,7 +237,9 @@ def find_closest_support(free_players, queued_players):
 
     remaining = [p for p in support if p not in selected]
     while len(selected) < 4:
-        idx = _greedy_pick_with_penalties(remaining, selected, "support_rating")
+        idx = _greedy_pick_with_penalties(remaining, selected, "support_rating", lobby_so_far)
+        if idx is None:
+            raise ValueError("Недостаточно игроков на роли Поддержка")
         selected.append(remaining.pop(idx))
 
     for player in list(selected):
@@ -239,18 +250,40 @@ def find_closest_support(free_players, queued_players):
     return selected, free_players, queued_players
 
 
-def check_lobby_status(lobby):
-    if lobby['team1']['tank'] is None: return False
-    for p in lobby['team1']['damage']:
-        if p is None: return False
-    for p in lobby['team1']['support']:
-        if p is None: return False
-    if lobby['team2']['tank'] is None: return False
-    for p in lobby['team2']['damage']:
-        if p is None: return False
-    for p in lobby['team2']['support']:
-        if p is None: return False
-    return True
+def _split_teams(tank_a, tank_b, damage_four, support_four):
+    """
+    Перебирает все варианты распределения уже отобранных 10 игроков по двум командам
+    (2 танка фиксированы по одному на команду, 4 урона и 4 саппорта делятся 2+2 всеми
+    возможными способами — итого 36 вариантов) и выбирает тот, где минимальна сумма:
+        |рейтинг_команда1 - рейтинг_команда2| + штраф за повтор состава.
+    """
+    best_teams, best_cost = None, float('inf')
+    for d1 in combinations(damage_four, 2):
+        d2 = [p for p in damage_four if p not in d1]
+        for s1 in combinations(support_four, 2):
+            s2 = [p for p in support_four if p not in s1]
+
+            team1 = {"tank": tank_a, "damage": list(d1), "support": list(s1)}
+            team2 = {"tank": tank_b, "damage": d2, "support": s2}
+
+            total1 = tank_a.tank_rating + sum(p.damage_rating for p in team1["damage"]) + sum(p.support_rating for p in team1["support"])
+            total2 = tank_b.tank_rating + sum(p.damage_rating for p in team2["damage"]) + sum(p.support_rating for p in team2["support"])
+            rating_cost = abs(total1 - total2)
+
+            members1 = [team1["tank"]] + team1["damage"] + team1["support"]
+            members2 = [team2["tank"]] + team2["damage"] + team2["support"]
+
+            mates_penalty = sum(pair_penalty(a, b, as_mates=True)
+                                 for members in (members1, members2)
+                                 for a, b in combinations(members, 2))
+            foes_penalty = sum(pair_penalty(a, b, as_mates=False)
+                                for a in members1 for b in members2)
+
+            cost = rating_cost + ALPHA_TEAMMATE * mates_penalty + ALPHA_OPPONENT * foes_penalty
+            if cost < best_cost:
+                best_cost, best_teams = cost, (team1, team2)
+
+    return best_teams
 
 
 def create_lobbies(lobby_count):
@@ -265,25 +298,16 @@ def create_lobbies(lobby_count):
 
     lobbies = []
     for _ in range(lobby_count):
-        lobby = {
-            "team1": {"tank": None, "damage": [], "support": []},
-            "team2": {"tank": None, "damage": [], "support": []}
-        }
-
         tanks, free_players, queued_players = find_closest_tanks(free_players, queued_players)
-        damage, free_players, queued_players = find_closest_damage(free_players, queued_players)
-        support, free_players, queued_players = find_closest_support(free_players, queued_players)
+        damage, free_players, queued_players = find_closest_damage(free_players, queued_players, lobby_so_far=tanks)
+        support, free_players, queued_players = find_closest_support(free_players, queued_players, lobby_so_far=tanks + damage)
 
-        # распределение по командам
+        team1, team2 = _split_teams(tanks[0], tanks[1], damage, support)
+        lobby = {"team1": team1, "team2": team2}
 
-        lobby["team1"]["tank"], lobby["team2"]["tank"] = tanks[0], tanks[1]
-        lobby["team1"]["damage"].append(damage[0]); lobby["team2"]["damage"].append(damage[1])
-        lobby["team1"]["damage"].append(damage[2]); lobby["team2"]["damage"].append(damage[3])
-        lobby["team1"]["support"].append(support[0]); lobby["team2"]["support"].append(support[1])
-        lobby["team1"]["support"].append(support[2]); lobby["team2"]["support"].append(support[3])
+        lobbies.append(lobby)
+        update_history_with_lobby(lobby)
 
-        if check_lobby_status(lobby):
-            lobbies.append(lobby)
-            update_history_with_lobby(lobby)
-
-    return lobbies, free_players
+    # игроки из очереди, не поместившиеся ни в одно из lobby_count лобби в этом вызове,
+    # обязаны попасть в следующий вызов !create_lobby первыми
+    return lobbies, free_players + queued_players

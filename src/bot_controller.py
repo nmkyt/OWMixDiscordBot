@@ -2,8 +2,10 @@ import re
 
 import discord
 
-from src.config import bot, BOT_TOKEN, session, run_db, logger
-from src.models import Player, Queue
+from discord.ext import commands
+
+from src.config import bot, BOT_TOKEN, ADMIN_IDS, session, run_db, logger
+from src.models import Player, Queue, MIN_RATING, MAX_RATING
 from src.sync_logic import (
     convert_rank_to_value,
     rank_to_value,
@@ -15,7 +17,7 @@ from src.sync_logic import (
     end,
 )
 
-admins = {279987350786801665, 934454583848214559, 302508335905898498}
+admins = ADMIN_IDS
 
 # Пример battle_tag: Sacr1ficed#2456
 BATTLE_TAG_PATTERN = re.compile(r"^[\w]+#\d+$")
@@ -28,6 +30,8 @@ def update_user_status(user_id, field, value):
         return 'not_registered'
 
     if field == 'checked_in':
+        if value == 'yes' and not user.priority_role:
+            return 'no_role'
         user.check_in = value
         session.commit()
         return True
@@ -50,6 +54,19 @@ def update_user_status(user_id, field, value):
 
 
 class CheckinView(discord.ui.View):
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item):
+        """Предохранитель на уровне кнопок: ошибка в одном клике не должна ронять бота
+        и не должна оставлять пользователя без ответа."""
+        logger.error(f'Error in CheckinView item {item}: {error}', exc_info=error)
+        try:
+            message = 'Произошла непредвиденная ошибка, попробуйте ещё раз.'
+            if interaction.response.is_done():
+                await interaction.followup.send(message, ephemeral=True)
+            else:
+                await interaction.response.send_message(message, ephemeral=True)
+        except Exception:
+            pass
+
     @discord.ui.button(label='✅Check-in', style=discord.ButtonStyle.success)
     async def check_in(self, interaction: discord.Interaction, button: discord.ui.Button):
         user_id = interaction.user.id
@@ -63,6 +80,11 @@ class CheckinView(discord.ui.View):
             return
         if result == 'not_registered':
             await interaction.followup.send("Вы не зарегистрированы. Используйте !register.", ephemeral=True)
+            return
+        if result == 'no_role':
+            await interaction.followup.send(
+                "Сначала выберите приоритетную роль (🛡️ Tank / 🏹 DPS / 💉 Support / 🎲 Flex), "
+                "затем нажмите ✅ Check-in.", ephemeral=True)
             return
         logger.info(f'User {user_name} successfully checked in.')
         await interaction.followup.send(f"{user_name} успешно прошел чек-ин.", ephemeral=True)
@@ -138,6 +160,30 @@ async def on_ready():
     logger.info('OW2 Mix Bot v1.0')
     logger.info('Developed by nmkyt')
     logger.info('Command list available at !mix_help in Discord app')
+
+
+@bot.event
+async def on_command_error(ctx, error):
+    """Общий предохранитель: ни одна ошибка в команде не должна проходить незамеченной
+    и не должна ронять бота — только логироваться и сообщаться пользователю."""
+    if isinstance(error, commands.CommandNotFound):
+        return
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(f'Не хватает аргумента «{error.param.name}». Смотрите !mix_help для примера.')
+        return
+    if isinstance(error, (commands.BadArgument, commands.BadUnionArgument)):
+        await ctx.send('Некорректный аргумент команды. Смотрите !mix_help для примера.')
+        return
+    if isinstance(error, commands.CommandOnCooldown):
+        await ctx.send('Команда на перезарядке, попробуйте чуть позже.')
+        return
+
+    original = getattr(error, 'original', error)
+    logger.error(f'Unhandled error in command "{ctx.command}": {original}', exc_info=original)
+    try:
+        await ctx.send('Произошла непредвиденная ошибка при выполнении команды. Бот продолжает работать, попробуйте ещё раз.')
+    except Exception:
+        pass
 
 
 @bot.command()
@@ -298,8 +344,8 @@ async def user_update(ctx, user_id: str, tank_rating: str, damage_rating: str, s
             value = int(rating)
         except ValueError:
             raise ValueError('Неверный формат рейтинга')
-        if not (0 <= value <= 5000):
-            raise ValueError('Рейтинг должен быть в диапазоне от 0 до 5000')
+        if not (MIN_RATING <= value <= MAX_RATING):
+            raise ValueError(f'Рейтинг должен быть в диапазоне от {MIN_RATING} до {MAX_RATING} (или 0, чтобы снять роль)')
         return value
 
     try:
@@ -359,8 +405,8 @@ async def update(ctx, tank_rating: str, damage_rating: str, support_rating: str)
                 value = int(rating)
             except ValueError:
                 raise ValueError('Введите корректную команду. Пример: !update 4000 d2 3700')
-            if not (0 <= value <= 5000):
-                raise ValueError('Введите корректное значение рейтинга (0-5000)')
+            if not (MIN_RATING <= value <= MAX_RATING):
+                raise ValueError(f'Введите корректное значение рейтинга ({MIN_RATING}-{MAX_RATING}, или 0 чтобы снять роль)')
             return value
 
         try:
@@ -414,8 +460,8 @@ async def register(ctx, battle_tag: str, tank_rating: str, damage_rating: str, s
             value = int(rating)
         except ValueError:
             raise ValueError('Неверный формат рейтинга')
-        if not (0 <= value <= 5000):
-            raise ValueError('Рейтинг должен быть в диапазоне от 0 до 5000')
+        if not (MIN_RATING <= value <= MAX_RATING):
+            raise ValueError(f'Рейтинг должен быть в диапазоне от {MIN_RATING} до {MAX_RATING} (или 0, если роль не играется)')
         return value
 
     try:
@@ -426,7 +472,7 @@ async def register(ctx, battle_tag: str, tank_rating: str, damage_rating: str, s
         await ctx.send(f'Введите корректную команду. Пример: !register Sacr1ficed#2456 4000 d2 3700 | {e}')
         return
 
-    priority = ''
+    priority = None
     if tank_value is not None:
         priority = 'tank'
     elif damage_value is not None:
@@ -445,7 +491,8 @@ async def register(ctx, battle_tag: str, tank_rating: str, damage_rating: str, s
             damage_rating=damage_value,
             support_rating=support_value,
             priority_role=priority,
-            discord_id=discord_id
+            discord_id=discord_id,
+            check_in='no',
         )
         session.add(user_info)
         session.commit()
