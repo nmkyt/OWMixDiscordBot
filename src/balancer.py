@@ -5,7 +5,9 @@ from itertools import combinations
 
 logger = logging.getLogger(__name__)
 
-HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "recent_pairs.json")
+# data/, а не src/ — это рантайм-состояние (история миксов), а не исходный код.
+DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+HISTORY_FILE = os.path.join(DATA_DIR, "recent_pairs.json")
 ALPHA_TEAMMATE = 50
 ALPHA_OPPONENT = 10
 WINDOW_GAMES = 6
@@ -38,10 +40,24 @@ def save_history():
     доступа, антивирус и т.п.) не должен мешать созданию лобби, поэтому не пробрасываем
     исключение наружу, только логируем."""
     try:
+        os.makedirs(DATA_DIR, exist_ok=True)
         with open(HISTORY_FILE, "w", encoding="utf-8") as f:
             json.dump({"pairs": RECENT_PAIRS, "game_index": GAME_INDEX}, f, ensure_ascii=False)
     except OSError as e:
         logger.error(f'Failed to save history file: {e}')
+
+
+def reset_history():
+    """
+    Полностью очищает историю анти-повтора — вызывается в конце вечера миксов (!mix_stop).
+    Без этого штрафы за повторы "утекали" бы между разными вечерами: например, если два
+    игрока сыграли вместе в последнем матче прошлого раза, балансировщик считал бы их
+    недавними тиммейтами и в первом матче следующего вечера, хотя между вечерами прошли дни.
+    """
+    global RECENT_PAIRS, GAME_INDEX
+    RECENT_PAIRS = {}
+    GAME_INDEX = 0
+    save_history()
 
 
 def pair_penalty(p1, p2, as_mates=True):
@@ -250,6 +266,106 @@ def find_closest_support(free_players, queued_players, lobby_so_far=()):
     return selected, free_players, queued_players
 
 
+ROLE_NEEDS = {'tank': 2, 'damage': 4, 'support': 4}
+RATING_ATTR = {'tank': 'tank_rating', 'damage': 'damage_rating', 'support': 'support_rating'}
+
+
+def _kuhn_match(num_left, adj):
+    """
+    Паросочетание Кула: num_left левых узлов (0..num_left-1), adj[i] — список допустимых
+    правых узлов для i. Возвращает {left: right} для максимального паросочетания.
+    Гарантированно находит полное паросочетание, если оно существует (в отличие от
+    жадного перебора) — на этом и строится гарантия сборки лобби.
+    """
+    match_right = {}
+
+    def try_assign(left, visited):
+        for right in adj[left]:
+            if right in visited:
+                continue
+            visited.add(right)
+            if right not in match_right or try_assign(match_right[right], visited):
+                match_right[right] = left
+                return True
+        return False
+
+    for left in range(num_left):
+        try_assign(left, set())
+
+    return {left: right for right, left in match_right.items()}
+
+
+def _match_roles(candidates, role_needs, eligible_fn):
+    """
+    candidates: список Player. role_needs: {role: сколько мест осталось}.
+    eligible_fn(player, role) -> bool.
+    Возвращает {role: [Player,...]}, если удалось заполнить ВСЕ запрошенные места, иначе None.
+    """
+    slots = []
+    for role, need in role_needs.items():
+        slots.extend([role] * need)
+    if not slots:
+        return {role: [] for role in role_needs}
+
+    adj = [[i for i, p in enumerate(candidates) if eligible_fn(p, role)] for role in slots]
+    matching = _kuhn_match(len(slots), adj)
+    if len(matching) != len(slots):
+        return None
+
+    result = {role: [] for role in role_needs}
+    for slot_idx, cand_idx in matching.items():
+        result[slots[slot_idx]].append(candidates[cand_idx])
+    return result
+
+
+def _guaranteed_lobby(free_players, queued_players):
+    """
+    Резервный способ собрать состав лобби, когда жадный find_closest_* не справился.
+    Жадный алгоритм может "по ошибке" забрать на роль с избытком кандидатов игрока,
+    который был единственным, кто мог закрыть дефицитную роль (например, игрок с рейтингом
+    и на танке, и на саппорте уходит в танки, хотя без него не набрать саппортов).
+    Эта функция не оптимизирует близость рейтингов — зато гарантированно находит рабочий
+    состав, если он математически существует (паросочетание Кула), сначала пробуя уважать
+    приоритетные роли игроков, и только если это невозможно — используя любой рейтинг.
+    """
+    remaining_free = list(free_players)
+    remaining_queued = list(queued_players)
+    assigned = {'tank': [], 'damage': [], 'support': []}
+
+    # Игроки из очереди обязаны сыграть — каждый на своей приоритетной роли (flex — туда,
+    # где сейчас не хватает мест сильнее всего). Роль уже занята другими queued — остаются
+    # в очереди для следующего вызова, а не теряются.
+    for player in list(remaining_queued):
+        role = player.priority_role
+        if role == 'flex':
+            role = min(ROLE_NEEDS, key=lambda r: len(assigned[r]) - ROLE_NEEDS[r])
+        if (role in ROLE_NEEDS and len(assigned[role]) < ROLE_NEEDS[role]
+                and getattr(player, RATING_ATTR.get(role, ''), None) is not None):
+            assigned[role].append(player)
+            remaining_queued.remove(player)
+
+    needs = {r: ROLE_NEEDS[r] - len(assigned[r]) for r in ROLE_NEEDS}
+    candidates = [p for p in remaining_free
+                  if any(needs[r] > 0 and getattr(p, RATING_ATTR[r], None) is not None for r in ROLE_NEEDS)]
+
+    def priority_eligible(p, role):
+        return p.priority_role in (role, 'flex') and getattr(p, RATING_ATTR[role]) is not None
+
+    def fallback_eligible(p, role):
+        return getattr(p, RATING_ATTR[role]) is not None
+
+    match = _match_roles(candidates, needs, priority_eligible) or _match_roles(candidates, needs, fallback_eligible)
+    if match is None:
+        raise ValueError("Недостаточно игроков для полного состава лобби")
+
+    for role, players in match.items():
+        assigned[role].extend(players)
+        for p in players:
+            remaining_free.remove(p)
+
+    return assigned['tank'], assigned['damage'], assigned['support'], remaining_free, remaining_queued
+
+
 def _split_teams(tank_a, tank_b, damage_four, support_four):
     """
     Перебирает все варианты распределения уже отобранных 10 игроков по двум командам
@@ -298,9 +414,19 @@ def create_lobbies(lobby_count):
 
     lobbies = []
     for _ in range(lobby_count):
-        tanks, free_players, queued_players = find_closest_tanks(free_players, queued_players)
-        damage, free_players, queued_players = find_closest_damage(free_players, queued_players, lobby_so_far=tanks)
-        support, free_players, queued_players = find_closest_support(free_players, queued_players, lobby_so_far=tanks + damage)
+        try:
+            # основной путь: жадный подбор близких по рейтингу игроков с анти-повтором.
+            # Работает на копиях списков — при неудаче ничего не потребляет из оригиналов,
+            # чтобы резервный вариант ниже мог использовать полный, нетронутый пул игроков.
+            free_copy, queued_copy = list(free_players), list(queued_players)
+            tanks, free_copy, queued_copy = find_closest_tanks(free_copy, queued_copy)
+            damage, free_copy, queued_copy = find_closest_damage(free_copy, queued_copy, lobby_so_far=tanks)
+            support, free_copy, queued_copy = find_closest_support(free_copy, queued_copy, lobby_so_far=tanks + damage)
+            free_players, queued_players = free_copy, queued_copy
+        except ValueError:
+            # жадный подбор не нашёл состав — не значит, что его не существует (см. docstring
+            # _guaranteed_lobby). Пробуем гарантированный резервный вариант на полном пуле.
+            tanks, damage, support, free_players, queued_players = _guaranteed_lobby(free_players, queued_players)
 
         team1, team2 = _split_teams(tanks[0], tanks[1], damage, support)
         lobby = {"team1": team1, "team2": team2}

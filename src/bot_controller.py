@@ -5,16 +5,17 @@ import discord
 from discord.ext import commands
 
 from src.config import bot, BOT_TOKEN, ADMIN_IDS, session, run_db, logger
-from src.models import Player, Queue, MIN_RATING, MAX_RATING
+from src.models import Player, Queue
+from src.balancer import reset_history
 from src.sync_logic import (
-    convert_rank_to_value,
-    rank_to_value,
     create_lobbies_caller,
     get_map,
     get_rating,
     check_queue,
     active_players,
     end,
+    parse_rating_input,
+    parse_rating_update,
 )
 
 admins = ADMIN_IDS
@@ -290,11 +291,12 @@ async def mix_stop(ctx):
     if ctx.author.id in admins:
         try:
             await run_db(end)
+            await run_db(reset_history)
         except Exception as e:
             logger.error(f'Error stopping mix: {e}')
             await ctx.send("Не удалось завершить миксы.")
             return
-        await ctx.send("Все игроки переведены в неактивный статус.")
+        await ctx.send("Все игроки переведены в неактивный статус, история анти-повтора очищена.")
     else:
         await ctx.send("У вас недостаточно прав для выполнения этой команды.")
 
@@ -334,24 +336,10 @@ async def user_update(ctx, user_id: str, tank_rating: str, damage_rating: str, s
     if ctx.author.id not in admins:
         return
 
-    def parse(rating: str):
-        rating = rating.split(',')[0]
-        if rating == '0':
-            return None
-        if rating.lower() in rank_to_value:
-            return convert_rank_to_value(rating.lower())
-        try:
-            value = int(rating)
-        except ValueError:
-            raise ValueError('Неверный формат рейтинга')
-        if not (MIN_RATING <= value <= MAX_RATING):
-            raise ValueError(f'Рейтинг должен быть в диапазоне от {MIN_RATING} до {MAX_RATING} (или 0, чтобы снять роль)')
-        return value
-
     try:
-        tank_value = parse(tank_rating)
-        damage_value = parse(damage_rating)
-        support_value = parse(support_rating)
+        tank_value = parse_rating_input(tank_rating)
+        damage_value = parse_rating_input(damage_rating)
+        support_value = parse_rating_input(support_rating)
     except ValueError as e:
         await ctx.send(f'Введите корректную команду. Пример: !user_update <id> 4000 d2 3700 | {e}')
         return
@@ -393,26 +381,10 @@ async def update(ctx, tank_rating: str, damage_rating: str, support_rating: str)
 
         priority = user.priority_role
 
-        def parse(rating: str, role: str):
-            rating = rating.split(',')[0]
-            if rating == '0':
-                if priority in (role, 'flex'):
-                    raise ValueError('Вы не можете обнулить рейтинг на роли, которая выбрана приоритетной')
-                return None
-            if rating.lower() in rank_to_value:
-                return convert_rank_to_value(rating.lower())
-            try:
-                value = int(rating)
-            except ValueError:
-                raise ValueError('Введите корректную команду. Пример: !update 4000 d2 3700')
-            if not (MIN_RATING <= value <= MAX_RATING):
-                raise ValueError(f'Введите корректное значение рейтинга ({MIN_RATING}-{MAX_RATING}, или 0 чтобы снять роль)')
-            return value
-
         try:
-            tank_value = parse(tank_rating, 'tank')
-            damage_value = parse(damage_rating, 'damage')
-            support_value = parse(support_rating, 'support')
+            tank_value = parse_rating_update(tank_rating, 'tank', priority)
+            damage_value = parse_rating_update(damage_rating, 'damage', priority)
+            support_value = parse_rating_update(support_rating, 'support', priority)
         except ValueError as e:
             return str(e)
 
@@ -450,24 +422,10 @@ async def register(ctx, battle_tag: str, tank_rating: str, damage_rating: str, s
         await ctx.send('Неверный формат battle_tag. Пример: Sacr1ficed#2456')
         return
 
-    def process_rating(rating: str):
-        rating = rating.split(',')[0]
-        if rating == '0':
-            return None
-        if rating.lower() in rank_to_value:
-            return convert_rank_to_value(rating.lower())
-        try:
-            value = int(rating)
-        except ValueError:
-            raise ValueError('Неверный формат рейтинга')
-        if not (MIN_RATING <= value <= MAX_RATING):
-            raise ValueError(f'Рейтинг должен быть в диапазоне от {MIN_RATING} до {MAX_RATING} (или 0, если роль не играется)')
-        return value
-
     try:
-        tank_value = process_rating(tank_rating)
-        damage_value = process_rating(damage_rating)
-        support_value = process_rating(support_rating)
+        tank_value = parse_rating_input(tank_rating)
+        damage_value = parse_rating_input(damage_rating)
+        support_value = parse_rating_input(support_rating)
     except ValueError as e:
         await ctx.send(f'Введите корректную команду. Пример: !register Sacr1ficed#2456 4000 d2 3700 | {e}')
         return

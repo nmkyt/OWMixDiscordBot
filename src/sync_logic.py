@@ -1,7 +1,10 @@
+import logging
 import random
 from src.balancer import create_lobbies
 from src.config import session
-from src.models import Queue, Player
+from src.models import Queue, Player, MIN_RATING, MAX_RATING
+
+logger = logging.getLogger(__name__)
 
 rank_to_value = {
     'b5': 1000, 'b4': 1100, 'b3': 1200, 'b2': 1300, 'b1': 1400,
@@ -32,6 +35,39 @@ def convert_rank_to_value(rank: str) -> int:
         return rank_to_value.get(rank, "Invalid rank")
     else:
         raise ValueError("Invalid rank")
+
+
+def parse_rating_input(rating: str):
+    """
+    Разбирает пользовательский ввод рейтинга для одной роли:
+    - '0' -> None (роль не играется);
+    - дивизион (b5..cp1, регистр не важен) -> число из rank_to_value;
+    - иначе -> int, если он в диапазоне [MIN_RATING, MAX_RATING].
+    Бросает ValueError с понятным сообщением при некорректном вводе.
+    """
+    rating = rating.split(',')[0].strip()
+    if rating == '0':
+        return None
+    if rating.lower() in rank_to_value:
+        return convert_rank_to_value(rating.lower())
+    try:
+        value = int(rating)
+    except ValueError:
+        raise ValueError('Неверный формат рейтинга')
+    if not (MIN_RATING <= value <= MAX_RATING):
+        raise ValueError(f'Рейтинг должен быть в диапазоне от {MIN_RATING} до {MAX_RATING} (или 0, если роль не играется)')
+    return value
+
+
+def parse_rating_update(rating: str, role: str, current_priority):
+    """
+    Как parse_rating_input, но дополнительно запрещает обнулить рейтинг той роли,
+    которая сейчас выбрана приоритетной (или flex) — используется в !update,
+    где игрок меняет рейтинг самостоятельно.
+    """
+    if rating.split(',')[0].strip() == '0' and current_priority in (role, 'flex'):
+        raise ValueError('Вы не можете обнулить рейтинг на роли, которая выбрана приоритетной')
+    return parse_rating_input(rating)
 
 
 def check_queue():
@@ -84,6 +120,6 @@ def create_lobbies_caller(lobby_count):
         else:
             raise StopIteration('Balancer cant find players')
     except StopIteration as e:
-        print(f"Error: {e}")
+        logger.error(f"Error: {e}")
     return lobbies, queued_players
 
