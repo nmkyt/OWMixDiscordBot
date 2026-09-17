@@ -426,7 +426,15 @@ def create_lobbies(lobby_count):
         except ValueError:
             # жадный подбор не нашёл состав — не значит, что его не существует (см. docstring
             # _guaranteed_lobby). Пробуем гарантированный резервный вариант на полном пуле.
-            tanks, damage, support, free_players, queued_players = _guaranteed_lobby(free_players, queued_players)
+            try:
+                tanks, damage, support, free_players, queued_players = _guaranteed_lobby(free_players, queued_players)
+            except ValueError as e:
+                # Ни жадный, ни гарантированный способ не собрали это лобби — дальше
+                # пытаться бессмысленно (игроков останется ещё меньше). Не роняем всю
+                # функцию: лобби, уже собранные в этом вызове, не должны пропадать
+                # только из-за того, что не хватило на ещё одно.
+                logger.warning(f'Could not form lobby {len(lobbies) + 1}/{lobby_count}: {e}')
+                break
 
         team1, team2 = _split_teams(tanks[0], tanks[1], damage, support)
         lobby = {"team1": team1, "team2": team2}

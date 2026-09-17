@@ -512,6 +512,10 @@ async def create_lobby(ctx, lobby_count: int):
             await ctx.send('Не удалось создать лобби.')
             return
 
+        if not lobbies:
+            await ctx.send('Не удалось собрать ни одного лобби — недостаточно игроков с нужными ролями.')
+            return
+
         for i, lobby in enumerate(lobbies):
             team1 = lobby['team1']
             team2 = lobby['team2']
@@ -529,6 +533,10 @@ async def create_lobby(ctx, lobby_count: int):
             teams_abs, match_rating = get_rating(lobby)
             await ctx.send(f'*Средний рейтинг матча {round(match_rating)}, Разница между командами: {teams_abs}*')
             await ctx.send('------------------------------------------')
+
+        if len(lobbies) < lobby_count:
+            await ctx.send(f'Удалось собрать только {len(lobbies)} из {lobby_count} лобби — '
+                           f'не хватило игроков с нужными ролями для остальных.')
 
         if queued_players:
             message = ' '.join(player.name for player in queued_players)

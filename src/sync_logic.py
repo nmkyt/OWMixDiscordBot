@@ -108,18 +108,19 @@ def get_rating(lobby):
 
 
 def create_lobbies_caller(lobby_count):
-    queued_players = []
-    lobbies = []
-    try:
-        lobbies, queued_players = create_lobbies(lobby_count)
-        if len(lobbies) == lobby_count:
-            for player in queued_players:
-                user = Queue(discord_id=player.discord_id)
-                session.add(user)
-                session.commit()
-        else:
-            raise StopIteration('Balancer cant find players')
-    except StopIteration as e:
-        logger.error(f"Error: {e}")
+    """
+    create_lobbies может вернуть меньше лобби, чем запрошено (если для остальных не
+    хватило игроков) — это не ошибка, а частичный успех, и его тоже нужно обработать:
+    оставшихся игроков вернуть в очередь. Полностью неудачные случаи (ValueError из
+    create_lobbies) не ловим — вызывающий код (!create_lobby) сам решает, что сказать
+    пользователю.
+    """
+    lobbies, queued_players = create_lobbies(lobby_count)
+    if len(lobbies) < lobby_count:
+        logger.warning(f'Only formed {len(lobbies)}/{lobby_count} requested lobbies')
+    for player in queued_players:
+        user = Queue(discord_id=player.discord_id)
+        session.add(user)
+        session.commit()
     return lobbies, queued_players
 

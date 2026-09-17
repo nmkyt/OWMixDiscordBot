@@ -2,6 +2,7 @@
 import pytest
 
 from src import sync_logic as sl
+from src.config import session
 from src.models import MIN_RATING, MAX_RATING
 
 
@@ -101,6 +102,25 @@ class TestDbBackedHelpers:
         sl.end()
         names, count = sl.active_players()
         assert count == 0
+
+    def test_leftover_players_requeued_on_partial_success(self, make_player):
+        """Регрессия: раньше оставшихся игроков возвращали в очередь только при
+        ПОЛНОМ успехе (все N лобби собраны) — при частичном успехе они терялись
+        из очереди (хотя из чек-ина не выпадали)."""
+        from src.models import Queue
+
+        for i in range(4):
+            make_player(f't{i}', priority_role='tank', tank_rating=3000, check_in='yes')
+        for i in range(12):
+            make_player(f'd{i}', priority_role='damage', damage_rating=2500, check_in='yes')
+        for i in range(4):
+            make_player(f's{i}', priority_role='support', support_rating=2000, check_in='yes')
+
+        lobbies, leftover = sl.create_lobbies_caller(2)
+
+        assert len(lobbies) == 1
+        assert len(leftover) == 10
+        assert session.query(Queue).count() == 10
 
     def test_check_queue_lists_queued_player_names(self, make_player):
         from src.config import session

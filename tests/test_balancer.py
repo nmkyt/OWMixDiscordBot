@@ -195,6 +195,39 @@ class TestGuaranteedLobbyFormation:
         assert {p.name for p in support} == {'S0', 'S1', 'S2', 'S3'}
 
 
+class TestCreateLobbiesPartialFailure:
+    """create_lobbies(N) не должна терять уже собранные лобби, если для оставшихся
+    не хватило игроков — ни жадный, ни гарантированный способ."""
+
+    def test_stops_and_keeps_earlier_lobbies_when_later_one_is_infeasible(self, make_player):
+        # 20 отметившихся (проходят проверку "хватает на 2 лобби"), но саппортов всего 4 —
+        # ровно на одно лобби. Второе лобби физически невозможно, но первое всё равно
+        # должно быть собрано и возвращено, а не потеряно.
+        for i in range(4):
+            make_player(f't{i}', priority_role='tank', tank_rating=3000, check_in='yes')
+        for i in range(12):
+            make_player(f'd{i}', priority_role='damage', damage_rating=2500, check_in='yes')
+        for i in range(4):
+            make_player(f's{i}', priority_role='support', support_rating=2000, check_in='yes')
+
+        lobbies, leftover = bal.create_lobbies(2)
+
+        assert len(lobbies) == 1
+        assert len(leftover) == 10  # 20 игроков - 10, ушедших в единственное собранное лобби
+
+    def test_single_lobby_request_with_exact_10_still_works(self, make_player):
+        for i in range(2):
+            make_player(str(i), priority_role='tank', tank_rating=3000, check_in='yes')
+        for i in range(4):
+            make_player(f'd{i}', priority_role='damage', damage_rating=2500, check_in='yes')
+        for i in range(4):
+            make_player(f's{i}', priority_role='support', support_rating=2000, check_in='yes')
+
+        lobbies, leftover = bal.create_lobbies(1)
+        assert len(lobbies) == 1
+        assert leftover == []
+
+
 class TestResetHistory:
     def test_clears_in_memory_state(self):
         bal.RECENT_PAIRS = {'1-2': {'last_as_mates': [1], 'last_as_foes': []}}
