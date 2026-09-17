@@ -57,6 +57,7 @@ def end():
     players = session.query(Player).all()
     for player in players:
         player.check_in = 'no'
+    session.commit()
 
 
 def get_rating(lobby):

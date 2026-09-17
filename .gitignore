@@ -1,2 +1,8 @@
 venv
 .env
+__pycache__/
+*.pyc
+backup/
+build/
+dist/
+.idea/

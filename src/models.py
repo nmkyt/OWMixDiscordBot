@@ -10,14 +10,14 @@ class Player(Base):
     tank_rating = Column(Integer, nullable=True)
     damage_rating = Column(Integer, nullable=True)
     support_rating = Column(Integer, nullable=True)
-    discord_id = Column(String, nullable=True)
+    discord_id = Column(String, nullable=True, unique=True)
     check_in = Column(String, nullable=True)
 
 
 class Queue(Base):
     __tablename__ = 'queue'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    discord_id = Column(String, nullable=True)
+    discord_id = Column(String, nullable=True, unique=True)
 
 
 Base.metadata.create_all(engine)
