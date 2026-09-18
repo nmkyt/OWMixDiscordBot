@@ -365,8 +365,8 @@ async def user_update(ctx, user_id: str, tank_rating: str, damage_rating: str, s
         await ctx.send('Пользователь не найден.')
         return
 
-    logger.info(f'nmkyt successfully updated rating of {username}.')
-    await ctx.send(f'nmkyt обновил рейтинг у {username}.')
+    logger.info(f'Admin successfully updated rating of {username}.')
+    await ctx.send(f'Администратор обновил рейтинг у {username}.')
 
 
 @bot.command()

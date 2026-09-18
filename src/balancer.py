@@ -403,7 +403,6 @@ def _split_teams(tank_a, tank_b, damage_four, support_four):
 
 
 def create_lobbies(lobby_count):
-    # инициализируем/загружаем историю
     init_history()
 
     queued_players, free_players = get_queue()

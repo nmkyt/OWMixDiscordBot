@@ -7,14 +7,15 @@ from src.models import Queue, Player, MIN_RATING, MAX_RATING
 logger = logging.getLogger(__name__)
 
 rank_to_value = {
-    'b5': 1000, 'b4': 1100, 'b3': 1200, 'b2': 1300, 'b1': 1400,
-    's5': 1500, 's4': 1600, 's3': 1700, 's2': 1800, 's1': 1900,
-    'g5': 2000, 'g4': 2100, 'g3': 2200, 'g2': 2300, 'g1': 2400,
-    'p5': 2500, 'p4': 2600, 'p3': 2700, 'p2': 2800, 'p1': 2900,
+    'b5': 500, 'b4': 600, 'b3': 700, 'b2': 800, 'b1': 900,
+    's5': 1000, 's4': 1100, 's3': 1200, 's2': 1300, 's1': 1400,
+    'g5': 1500, 'g4': 1600, 'g3': 1700, 'g2': 1800, 'g1': 1900,
+    'p5': 2000, 'p4': 2100, 'p3': 2200, 'p2': 2300, 'p1': 2400,
+    'e5': 2500, 'e4': 2600, 'e3': 2700, 'e2': 2800, 'e1': 2900,
     'd5': 3000, 'd4': 3100, 'd3': 3200, 'd2': 3300, 'd1': 3400,
     'm5': 3500, 'm4': 3600, 'm3': 3700, 'm2': 3800, 'm1': 3900,
     'gm5': 4000, 'gm4': 4100, 'gm3': 4200, 'gm2': 4300, 'gm1': 4400,
-    'cp5': 4500, 'cp4': 4600, 'cp3': 4700, 'cp2': 4800, 'cp1': 4900
+    'chm5': 4500, 'chm4': 4600, 'chm3': 4700, 'chm2': 4800, 'chm1': 5000
 }
 
 
@@ -22,7 +23,7 @@ maps = [
     'Lijiang Tower', 'Antarctic Peninsula', 'Ilios', 'Nepal', 'Samoa',
     'Circuit Royal', 'Dorado', 'Havana', 'Junkertown', 'Rialto', 'Route 66',
     'Watchpoint: Gibraltar', 'Blizzard World', 'Eichenwalde', 'Hollywood',
-    'Midtown', 'Paraiso', 'Colosseo', 'Runasapi', 'Oasis'
+    'Midtown', 'Paraiso', 'Colosseo', 'Runasapi', 'Oasis', 'Neon Junction'
 ]
 
 
@@ -41,7 +42,7 @@ def parse_rating_input(rating: str):
     """
     Разбирает пользовательский ввод рейтинга для одной роли:
     - '0' -> None (роль не играется);
-    - дивизион (b5..cp1, регистр не важен) -> число из rank_to_value;
+    - дивизион (b5..cmp1, регистр не важен) -> число из rank_to_value;
     - иначе -> int, если он в диапазоне [MIN_RATING, MAX_RATING].
     Бросает ValueError с понятным сообщением при некорректном вводе.
     """
