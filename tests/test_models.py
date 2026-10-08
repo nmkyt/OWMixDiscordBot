@@ -50,12 +50,12 @@ class TestPriorityRoleConstraint:
 
 class TestRatingConstraints:
     def test_within_range_accepted(self):
-        session.add(_make('1', tank_rating=1000))
+        session.add(_make('1', tank_rating=500))
         session.add(_make('2', tank_rating=5000))
         session.commit()
 
     def test_below_min_rejected(self):
-        session.add(_make('1', tank_rating=999))
+        session.add(_make('1', tank_rating=499))
         with pytest.raises(IntegrityError):
             session.commit()
         session.rollback()

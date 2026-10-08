@@ -1,7 +1,7 @@
 from sqlalchemy import CheckConstraint, Column, Integer, String
 from src.config import Base, engine
 
-MIN_RATING = 1000
+MIN_RATING = 500
 MAX_RATING = 5000
 ROLES = ('tank', 'damage', 'support', 'flex')
 

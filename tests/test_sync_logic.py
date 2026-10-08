@@ -25,7 +25,7 @@ class TestParseRatingInput:
 
     def test_bronze_is_valid(self):
         """Регрессия: минимальная граница диапазона должна пропускать Bronze (b1-b5)."""
-        assert sl.parse_rating_input('b5') == 1000
+        assert sl.parse_rating_input('b5') == MIN_RATING == 500
 
     def test_numeric_within_range(self):
         assert sl.parse_rating_input('3000') == 3000
