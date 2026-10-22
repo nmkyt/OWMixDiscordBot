@@ -38,6 +38,22 @@ def convert_rank_to_value(rank: str) -> int:
         raise ValueError("Invalid rank")
 
 
+rank_tiers = [
+    (4500, 'Champion'), (4000, 'Grandmaster'), (3500, 'Master'),
+    (3000, 'Diamond'), (2500, 'Emerald'), (2000, 'Platinum'),
+    (1500, 'Gold'), (1000, 'Silver'), (500, 'Bronze'),
+]
+
+
+def format_rating(value: int) -> str:
+    """Числовой рейтинг -> вид как в Overwatch 2, например 3500 -> 'Master 5 (3500)'."""
+    for base, tier in rank_tiers:
+        if value >= base:
+            division = max(1, 5 - (value - base) // 100)
+            return f'{tier} {division} ({value})'
+    return str(value)
+
+
 def parse_rating_input(rating: str):
     """
     Разбирает пользовательский ввод рейтинга для одной роли:

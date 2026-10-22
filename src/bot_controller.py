@@ -14,6 +14,7 @@ from src.sync_logic import (
     check_queue,
     active_players,
     end,
+    format_rating,
     parse_rating_input,
     parse_rating_update,
 )
@@ -311,11 +312,11 @@ async def my_rank(ctx):
             return None
         lines = [f'Имя пользователя: {user.name}']
         if user.tank_rating is not None:
-            lines.append(f'Рейтинг на танке: {user.tank_rating}')
+            lines.append(f'Рейтинг на танке: {format_rating(user.tank_rating)}')
         if user.damage_rating is not None:
-            lines.append(f'Рейтинг на дпсах: {user.damage_rating}')
+            lines.append(f'Рейтинг на дпсах: {format_rating(user.damage_rating)}')
         if user.support_rating is not None:
-            lines.append(f'Рейтинг на саппортах: {user.support_rating}')
+            lines.append(f'Рейтинг на саппортах: {format_rating(user.support_rating)}')
         return '\n'.join(lines)
 
     try:
