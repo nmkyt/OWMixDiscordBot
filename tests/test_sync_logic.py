@@ -122,6 +122,68 @@ class TestDbBackedHelpers:
         assert len(leftover) == 10
         assert session.query(Queue).count() == 10
 
+    def test_full_evening_without_manual_queue_cleanup(self, make_player):
+        """Регрессия: 30 отметившихся + !create_lobby 2 оставляли 10 человек в очереди,
+        а create_lobbies отказывалась работать при очереди >= 10 — каждый следующий
+        !create_lobby падал до ручного !queue_clear. Теперь вечер идёт сам, а ждавшие
+        играют в следующем вызове первыми."""
+        for i in range(6):
+            make_player(f't{i}', priority_role='tank', tank_rating=2500 + i * 100, check_in='yes')
+        for i in range(12):
+            make_player(f'd{i}', priority_role='damage', damage_rating=2000 + i * 50, check_in='yes')
+        for i in range(12):
+            make_player(f's{i}', priority_role='support', support_rating=1800 + i * 50, check_in='yes')
+
+        def lobby_ids(lobbies):
+            return {p.discord_id for lobby in lobbies for team in (lobby['team1'], lobby['team2'])
+                    for p in [team['tank']] + team['damage'] + team['support']}
+
+        def queue_ids():
+            return [q.discord_id for q in session.query(Queue).order_by(Queue.id)]
+
+        waiting = set()
+        for _ in range(3):
+            lobbies, leftover = sl.create_lobbies_caller(2)
+            played = lobby_ids(lobbies)
+            assert len(lobbies) == 2 and len(played) == 20
+            assert waiting <= played  # все ждавшие сыграли в этом вызове
+            assert queue_ids() == [p.discord_id for p in leftover]
+            assert len(leftover) == 10 and not (set(queue_ids()) & played)
+            waiting = set(queue_ids())
+
+    def test_queue_order_is_priority_order(self, make_player):
+        """Мест на роли меньше, чем ждущих: играют стоящие в очереди раньше, а
+        не попавший остаётся в начале новой очереди — перед новыми ожидающими."""
+        make_player('q1', priority_role='tank', tank_rating=3000, check_in='yes')
+        make_player('q2', priority_role='tank', tank_rating=3500, check_in='yes')
+        make_player('q3', priority_role='tank', tank_rating=4000, check_in='yes')
+        make_player('ft', priority_role='tank', tank_rating=4000, check_in='yes')
+        for i in range(4):
+            make_player(f'd{i}', priority_role='damage', damage_rating=2500, check_in='yes')
+            make_player(f's{i}', priority_role='support', support_rating=2000, check_in='yes')
+        for discord_id in ('q2', 'q3', 'q1'):
+            session.add(Queue(discord_id=discord_id))
+            session.commit()
+
+        lobbies, leftover = sl.create_lobbies_caller(1)
+
+        tanks = {lobbies[0]['team1']['tank'].discord_id, lobbies[0]['team2']['tank'].discord_id}
+        assert tanks == {'q2', 'q3'}
+        assert [q.discord_id for q in session.query(Queue).order_by(Queue.id)] == ['q1', 'ft']
+
+    def test_queue_untouched_when_no_lobby_formed(self, make_player):
+        """Ноль лобби — это не повод ставить в очередь всех отметившихся: тогда
+        приоритет реально ждущих игроков потерялся бы."""
+        for i in range(10):
+            make_player(f'd{i}', priority_role='damage', damage_rating=2500, check_in='yes')
+        session.add(Queue(discord_id='d3'))
+        session.commit()
+
+        lobbies, _ = sl.create_lobbies_caller(1)
+
+        assert lobbies == []
+        assert [q.discord_id for q in session.query(Queue)] == ['d3']
+
     def test_check_queue_lists_queued_player_names(self, make_player):
         from src.config import session
         from src.models import Queue

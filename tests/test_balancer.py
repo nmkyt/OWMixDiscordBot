@@ -228,6 +228,36 @@ class TestCreateLobbiesPartialFailure:
         assert leftover == []
 
 
+class TestCreateLobbiesLargeQueue:
+    def test_queue_of_ten_or_more_is_accepted_and_carried_over(self, make_player):
+        """Регрессия: раньше очередь >= 10 вызывала отказ. Теперь из очереди берётся
+        не больше мест на роль за лобби, остальные переходят в следующее лобби/вызов."""
+        from src.config import session
+        from src.models import Queue
+
+        for i in range(6):
+            make_player(f'qt{i}', priority_role='tank', tank_rating=3000, check_in='yes')
+        for i in range(6):
+            make_player(f'qd{i}', priority_role='damage', damage_rating=2500, check_in='yes')
+        for i in range(4):
+            make_player(f's{i}', priority_role='support', support_rating=2000, check_in='yes')
+        for discord_id in [f'qt{i}' for i in range(6)] + [f'qd{i}' for i in range(6)]:
+            session.add(Queue(discord_id=discord_id))
+        session.commit()
+
+        lobbies, leftover = bal.create_lobbies(1)
+
+        assert len(lobbies) == 1
+        lobby = lobbies[0]
+        assert {lobby['team1']['tank'].discord_id, lobby['team2']['tank'].discord_id} == {'qt0', 'qt1'}
+        assert {p.discord_id for team in (lobby['team1'], lobby['team2'])
+                for p in team['damage']} == {'qd0', 'qd1', 'qd2', 'qd3'}
+        # не попавшие из очереди — в начале списка, в прежнем порядке
+        assert [p.discord_id for p in leftover] == ['qt2', 'qt3', 'qt4', 'qt5', 'qd4', 'qd5']
+        # create_lobbies сама таблицу очереди не трогает — это делает create_lobbies_caller
+        assert session.query(Queue).count() == 12
+
+
 class TestResetHistory:
     def test_clears_in_memory_state(self):
         bal.RECENT_PAIRS = {'1-2': {'last_as_mates': [1], 'last_as_foes': []}}

@@ -129,7 +129,9 @@ def get_players():
 
 
 def get_queue():
-    queued_players = session.query(Queue).all()
+    # порядок очереди = порядок приоритета: кто ждёт дольше, тот добавлен раньше
+    # (create_lobbies_caller записывает ещё не сыгравших из очереди перед новыми).
+    queued_players = session.query(Queue).order_by(Queue.id).all()
     free_players = get_players()
     queue = []
     if queued_players:
@@ -139,8 +141,6 @@ def get_queue():
                     queue.append(player_free)
                     free_players.remove(player_free)
                     break
-    session.query(Queue).delete()
-    session.commit()
     return queue, free_players
 
 
@@ -406,10 +406,14 @@ def create_lobbies(lobby_count):
     init_history()
 
     queued_players, free_players = get_queue()
-    if (lobby_count * 10) > (len(queued_players) + len(free_players)):
-        raise ValueError("Количество лобби превышает количество игроков")
-    if len(queued_players) >= 10:
-        raise ValueError("Количество игроков в очереди превышает 10.")
+    total = len(queued_players) + len(free_players)
+    if (lobby_count * 10) > total:
+        raise ValueError(f"для {lobby_count} лобби нужно {lobby_count * 10} отметившихся игроков, сейчас {total}.")
+    # Размер очереди не ограничен: find_closest_* / _guaranteed_lobby берут из очереди
+    # не больше, чем мест на роли (2/4/4), в порядке очереди, а лишних оставляют в
+    # queued_players — они переходят в следующее лобби этого вызова или в следующий вызов.
+    # Таблицу Queue эта функция не меняет — её перезаписывает create_lobbies_caller
+    # только после успешной сборки, поэтому при любом отказе очередь остаётся нетронутой.
 
     lobbies = []
     for _ in range(lobby_count):
@@ -442,5 +446,5 @@ def create_lobbies(lobby_count):
         update_history_with_lobby(lobby)
 
     # игроки из очереди, не поместившиеся ни в одно из lobby_count лобби в этом вызове,
-    # обязаны попасть в следующий вызов !create_lobby первыми
-    return lobbies, free_players + queued_players
+    # обязаны попасть в следующий вызов !create_lobby первыми — поэтому идут в начале списка
+    return lobbies, queued_players + free_players

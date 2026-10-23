@@ -171,13 +171,22 @@ def create_lobbies_caller(lobby_count):
     оставшихся игроков вернуть в очередь. Полностью неудачные случаи (ValueError из
     create_lobbies) не ловим — вызывающий код (!create_lobby) сам решает, что сказать
     пользователю.
+
+    Очередь перезаписывается целиком и одним коммитом, только если собрано хотя бы одно
+    лобби: при ошибке или нуле лобби в ней остаётся прежний состав (иначе все отметившиеся
+    оказались бы "в очереди" и приоритет реально ждущих игроков потерялся бы).
+    Порядок записи — порядок приоритета (см. create_lobbies): сначала ещё не сыгравшие
+    из старой очереди, потом новые не попавшие в лобби.
     """
     lobbies, queued_players = create_lobbies(lobby_count)
     if len(lobbies) < lobby_count:
         logger.warning(f'Only formed {len(lobbies)}/{lobby_count} requested lobbies')
-    for player in queued_players:
-        user = Queue(discord_id=player.discord_id)
-        session.add(user)
-        session.commit()
+    if lobbies:
+        try:
+            session.query(Queue).delete()
+            session.add_all([Queue(discord_id=player.discord_id) for player in queued_players])
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
     return lobbies, queued_players
-
