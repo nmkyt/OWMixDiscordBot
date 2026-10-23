@@ -177,3 +177,29 @@ class TestAdminCommands:
 
     def test_user_update_unknown_user(self):
         assert 'не зарегистрирован' in last('!user_update 999 3000 3000 3000', ADMIN_ID)
+
+
+class TestLogging:
+    def test_non_admin_attempt_is_warning(self, caplog):
+        last('!create_lobby 2')
+        assert any(r.levelname == 'WARNING' and 'Non-admin' in r.getMessage() and str(PLAYER_ID) in r.getMessage()
+                   for r in caplog.records)
+
+    def test_input_error_is_info(self, caplog):
+        caplog.set_level('INFO')
+        last('!register badtag 3000 3000 3000')
+        assert any(r.levelname == 'INFO' and 'Input error in !register' in r.getMessage() for r in caplog.records)
+
+    def test_db_failure_is_logged_with_traceback(self, monkeypatch, caplog):
+        async def broken_db(*args, **kwargs):
+            raise RuntimeError('db down')
+        monkeypatch.setattr(bc, 'run_db', broken_db)
+        last('!mix_status', ADMIN_ID)
+        errors = [r for r in caplog.records if r.levelname == 'ERROR']
+        assert errors and errors[0].exc_info is not None
+
+    def test_admin_action_is_audited(self, make_player, caplog):
+        caplog.set_level('INFO')
+        make_player('42', name='Alice', check_in='yes')
+        last('!queue_add 42', ADMIN_ID)
+        assert any(f'({ADMIN_ID}) added Alice (42) to the queue' in r.getMessage() for r in caplog.records)

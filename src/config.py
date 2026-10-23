@@ -40,13 +40,13 @@ def _parse_admin_ids(raw: str) -> set[int]:
         try:
             ids.add(int(part))
         except ValueError:
-            logger.warning(f'Игнорирую некорректный элемент ADMIN_IDS: {part!r}')
+            logger.warning(f'Ignoring invalid ADMIN_IDS entry: {part!r}')
     return ids
 
 
 ADMIN_IDS = _parse_admin_ids(os.getenv("ADMIN_IDS", ""))
 if not ADMIN_IDS:
-    logger.warning('ADMIN_IDS не задан или пуст в .env — админ-команды бота будут недоступны никому.')
+    logger.warning('ADMIN_IDS is empty or not set in .env: admin commands will be unavailable to everyone')
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 Base = sqlalchemy.orm.declarative_base()

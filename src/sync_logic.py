@@ -1,10 +1,7 @@
-import logging
 import random
 from src.balancer import create_lobbies, ROLE_NEEDS
 from src.config import session
 from src.models import Queue, Player, MIN_RATING, MAX_RATING
-
-logger = logging.getLogger(__name__)
 
 rank_to_value = {
     'b5': 500, 'b4': 600, 'b3': 700, 'b2': 800, 'b1': 900,
@@ -179,8 +176,6 @@ def create_lobbies_caller(lobby_count):
     ValueError из create_lobbies пробрасывается: что ответить пользователю, решает !create_lobby.
     """
     lobbies, queued_players = create_lobbies(lobby_count)
-    if len(lobbies) < lobby_count:
-        logger.warning(f'Only formed {len(lobbies)}/{lobby_count} requested lobbies')
     if lobbies:
         try:
             session.query(Queue).delete()

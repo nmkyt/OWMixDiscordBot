@@ -155,6 +155,7 @@ class CheckinView(discord.ui.View):
     async def on_timeout(self):
         """Отключает кнопки и помечает чек-ин закрытым, чтобы клик по устаревшей кнопке
         не заканчивался безликим «Interaction failed»."""
+        logger.info('Check-in closed by timeout')
         for item in self.children:
             item.disabled = True
         if self.message is None:
@@ -186,8 +187,8 @@ class CheckinView(discord.ui.View):
         await interaction.response.defer()
         try:
             result = await run_db(update_user_status, user_id, 'checked_in', 'yes')
-        except Exception as e:
-            logger.error(f'Error checking in {user_name}: {e}')
+        except Exception:
+            logger.exception(f'Error checking in {user_name}')
             await interaction.followup.send(system_error_text('пройти чек-ин'), ephemeral=True)
             return
         if result == 'not_registered':
@@ -209,8 +210,8 @@ class CheckinView(discord.ui.View):
         await interaction.response.defer()
         try:
             result = await run_db(update_user_status, user_id, 'checked_in', 'no')
-        except Exception as e:
-            logger.error(f'Error checking out {user_name}: {e}')
+        except Exception:
+            logger.exception(f'Error checking out {user_name}')
             await interaction.followup.send(system_error_text('пройти чек-аут'), ephemeral=True)
             return
         if result == 'not_registered':
@@ -228,8 +229,8 @@ class CheckinView(discord.ui.View):
         await interaction.response.defer()
         try:
             result = await run_db(update_user_status, user_id, 'priority_role', role)
-        except Exception as e:
-            logger.error(f'Error setting priority role for {user_name}: {e}')
+        except Exception:
+            logger.exception(f'Error setting priority role for {user_name}')
             await interaction.followup.send(system_error_text('выбрать роль'), ephemeral=True)
             return
         if result == 'not_registered':
@@ -277,6 +278,11 @@ async def on_ready():
     logger.info('Command list available at !mix_help in Discord app')
 
 
+def _who(ctx):
+    """Автор команды для логов: имя и Discord ID."""
+    return f'{ctx.author.name} ({ctx.author.id})'
+
+
 def _usage(ctx):
     """Пример вызова команды для сообщения об ошибке — под тем именем, которое набрал
     пользователь (для !registration покажет !registration, а не !register)."""
@@ -293,6 +299,7 @@ async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
         message = error_text(f'Неизвестная команда «!{ctx.invoked_with}». Список команд: !mix_help.')
     elif isinstance(error, NotAdmin):
+        logger.warning(f'Non-admin {_who(ctx)} tried !{ctx.invoked_with}')
         message = error_text('У вас недостаточно прав для выполнения этой команды.')
     elif isinstance(error, InputError):
         message = error_text(error.problem, _usage(ctx) if error.with_usage else None)
@@ -310,16 +317,20 @@ async def on_command_error(ctx, error):
     elif isinstance(error, commands.CommandOnCooldown):
         message = error_text('Команда на перезарядке, попробуйте чуть позже.')
     elif isinstance(error, commands.CheckFailure):
+        logger.warning(f'Check failed for !{ctx.invoked_with} by {_who(ctx)}: {error}')
         message = error_text('Эту команду сейчас нельзя выполнить.')
     else:
         original = getattr(error, 'original', error)
         logger.error(f'Unhandled error in command "{ctx.command}": {original}', exc_info=original)
         message = system_error_text('выполнить команду')
 
+    if isinstance(error, (InputError, commands.UserInputError)):
+        logger.info(f'Input error in !{ctx.invoked_with} by {_who(ctx)}: {error}')
+
     try:
         await ctx.send(message)
-    except Exception as e:
-        logger.error(f'Could not report command error to chat: {e}')
+    except Exception:
+        logger.exception('Could not report command error to chat')
 
 
 @bot.command()
@@ -331,6 +342,7 @@ async def check(ctx):
         'Чекин на миксы начался! Обратите внимание, что пройти check-in могут только зарегистрированные игроки.')
     view.message = await ctx.send(
         'Нажмите ✅ и выберите приоритетную роль. Пожалуйста, нажмите ❌, если покидаете миксы.', view=view)
+    logger.info(f'Check-in opened by {_who(ctx)}')
 
 
 @bot.command()
@@ -356,8 +368,8 @@ async def queue(ctx):
     """Показать очередь на следующую игру (админ)."""
     try:
         queued_players = await run_db(check_queue)
-    except Exception as e:
-        logger.error(f'Error fetching queue: {e}')
+    except Exception:
+        logger.exception('Error fetching queue')
         await ctx.send(system_error_text('получить очередь'))
         return
     await ctx.send(f'{queued_players}')
@@ -381,8 +393,8 @@ async def queue_add(ctx, discord_id: str):
 
     try:
         result, name = await run_db(_add)
-    except Exception as e:
-        logger.error(f'Error adding to queue: {e}')
+    except Exception:
+        logger.exception('Error adding to queue')
         await ctx.send(system_error_text('добавить игрока в очередь'))
         return
 
@@ -390,6 +402,7 @@ async def queue_add(ctx, discord_id: str):
         raise InputError(f'Игрок с discord_id {discord_id} не зарегистрирован.')
     if result == 'already_queued':
         raise InputError(f'{name} уже в очереди.', with_usage=False)
+    logger.info(f'{_who(ctx)} added {name} ({discord_id}) to the queue')
     message = f'{name} успешно добавлен в очередь'
     if result != 'yes':
         message += ' (внимание: игрок не прошёл чек-ин — пока он не отметится, очередь его не учтёт)'
@@ -412,13 +425,14 @@ async def queue_remove(ctx, discord_id: str):
 
     try:
         found = await run_db(_remove)
-    except Exception as e:
-        logger.error(f'Error removing from queue: {e}')
+    except Exception:
+        logger.exception('Error removing from queue')
         await ctx.send(system_error_text('убрать игрока из очереди'))
         return
 
     if not found:
         raise InputError(f'Игрока с discord_id {discord_id} нет в очереди.', with_usage=False)
+    logger.info(f'{_who(ctx)} removed {discord_id} from the queue')
     await ctx.send("Пользователь успешно убран из очереди")
 
 
@@ -432,10 +446,11 @@ async def queue_clear(ctx):
 
     try:
         await run_db(_clear)
-    except Exception as e:
-        logger.error(f'Error clearing queue: {e}')
+    except Exception:
+        logger.exception('Error clearing queue')
         await ctx.send(system_error_text('очистить очередь'))
         return
+    logger.info(f'Queue cleared by {_who(ctx)}')
     await ctx.send("Очередь успешно очищена")
 
 
@@ -445,8 +460,8 @@ async def mix_status(ctx):
     """Статус миксов: регистрации, чек-ин, роли, очередь, сколько лобби можно собрать (админ)."""
     try:
         status = await run_db(get_mix_status)
-    except Exception as e:
-        logger.error(f'Error fetching mix status: {e}')
+    except Exception:
+        logger.exception('Error fetching mix status')
         await ctx.send(system_error_text('получить статус миксов'))
         return
 
@@ -476,8 +491,8 @@ async def players(ctx):
     """Список отметившихся игроков (админ)."""
     try:
         result = await run_db(active_players)
-    except Exception as e:
-        logger.error(f'Error fetching active players: {e}')
+    except Exception:
+        logger.exception('Error fetching active players')
         await ctx.send(system_error_text('получить список игроков'))
         return
     await ctx.send(f"{result}")
@@ -490,10 +505,11 @@ async def mix_stop(ctx):
     try:
         await run_db(end)
         await run_db(reset_history)
-    except Exception as e:
-        logger.error(f'Error stopping mix: {e}')
+    except Exception:
+        logger.exception('Error stopping mix')
         await ctx.send(system_error_text('завершить миксы'))
         return
+    logger.info(f'Mix stopped by {_who(ctx)}: all players checked out, anti-repeat history reset')
     await ctx.send("Все игроки переведены в неактивный статус, история анти-повтора очищена.")
 
 
@@ -517,8 +533,8 @@ async def my_rank(ctx):
 
     try:
         result = await run_db(_get)
-    except Exception as e:
-        logger.error(f'Error fetching rank for {ctx.author.name}: {e}')
+    except Exception:
+        logger.exception(f'Error fetching rank for {ctx.author.name}')
         await ctx.send(system_error_text('получить данные о рейтинге'))
         return
 
@@ -549,8 +565,8 @@ async def user_update(ctx, user_id: str, tank_rating: str, damage_rating: str, s
 
     try:
         result = await run_db(_update)
-    except Exception as e:
-        logger.error(f'Error updating user rating: {e}')
+    except Exception:
+        logger.exception('Error updating user rating')
         await ctx.send(system_error_text('обновить рейтинг пользователя'))
         return
 
@@ -559,7 +575,8 @@ async def user_update(ctx, user_id: str, tank_rating: str, damage_rating: str, s
     if isinstance(result, InputError):
         raise result
 
-    logger.info(f'Admin successfully updated rating of {result}.')
+    logger.info(f'{_who(ctx)} updated rating of {result} ({user_id}): '
+                f'tank={tank_rating}, damage={damage_rating}, support={support_rating}')
     await ctx.send(f'Администратор обновил рейтинг у {result}.')
 
 
@@ -584,8 +601,8 @@ async def update(ctx, tank_rating: str, damage_rating: str, support_rating: str)
 
     try:
         result = await run_db(_update)
-    except Exception as e:
-        logger.error(f'Error updating user rating: {e}')
+    except Exception:
+        logger.exception('Error updating user rating')
         await ctx.send(system_error_text('обновить рейтинг'))
         return
 
@@ -595,7 +612,8 @@ async def update(ctx, tank_rating: str, damage_rating: str, support_rating: str)
     if isinstance(result, InputError):
         raise result
 
-    logger.info(f'User {username} successfully updated his rating.')
+    logger.info(f'User {username} ({discord_id}) updated their rating: '
+                f'tank={tank_rating}, damage={damage_rating}, support={support_rating}')
     await ctx.send('Вы успешно изменили свой рейтинг')
 
 
@@ -637,8 +655,8 @@ async def register(ctx, battle_tag: str, tank_rating: str, damage_rating: str, s
 
     try:
         result = await run_db(_register)
-    except Exception as e:
-        logger.error(f'Error registering user: {e}')
+    except Exception:
+        logger.exception('Error registering user')
         await ctx.send(system_error_text('зарегистрировать пользователя'))
         return
 
@@ -647,7 +665,7 @@ async def register(ctx, battle_tag: str, tank_rating: str, damage_rating: str, s
                                   USAGE['update']))
         return
 
-    logger.info(f'User {username} successfully registered.')
+    logger.info(f'User {username} ({discord_id}) registered')
     await ctx.send('Вы успешно зарегистрировались на миксы')
 
 
@@ -671,13 +689,14 @@ async def uncheck(ctx, discord_id: str):
 
     try:
         found = await run_db(_uncheck)
-    except Exception as e:
-        logger.error(f'Error unchecking user: {e}')
+    except Exception:
+        logger.exception('Error unchecking user')
         await ctx.send(system_error_text('снять чек-ин'))
         return
 
     if not found:
         raise InputError(f'Игрок с discord_id {discord_id} не зарегистрирован.')
+    logger.info(f'{_who(ctx)} unchecked {discord_id}')
     await ctx.send('Пользователь был успешно удален из очереди')
 
 
@@ -692,11 +711,13 @@ async def create_lobby(ctx, lobby_count: int):
         lobbies, queued_players = await run_db(create_lobbies_caller, lobby_count)
     except ValueError as e:
         raise InputError(f'Не удалось создать лобби: {e}', with_usage=False)
-    except Exception as e:
-        logger.error(f'Error creating lobbies: {e}')
+    except Exception:
+        logger.exception('Error creating lobbies')
         await ctx.send(system_error_text('создать лобби'))
         return
 
+    logger.info(f'{_who(ctx)} requested {lobby_count} lobbies: formed {len(lobbies)}, '
+                f'{len(queued_players)} players left waiting')
     if not lobbies:
         await ctx.send(error_text('Не удалось собрать ни одного лобби — недостаточно игроков с нужными ролями. '
                                   'Посмотреть, каких ролей не хватает: !mix_status.'))
@@ -717,6 +738,7 @@ async def create_lobby(ctx, lobby_count: int):
             f' {team2["support"][1].name}**')
         await ctx.send(f'**🎲 Карта: {get_map()}**')
         teams_abs, match_rating = get_rating(lobby)
+        logger.info(f'Lobby {i + 1}: avg rating {round(match_rating)}, team diff {teams_abs}')
         await ctx.send(f'*Средний рейтинг матча {round(match_rating)}, Разница между командами: {teams_abs}*')
         await ctx.send('------------------------------------------')
 
@@ -730,7 +752,7 @@ async def create_lobby(ctx, lobby_count: int):
 
 
 def main():
-    bot.run(BOT_TOKEN)
+    bot.run(BOT_TOKEN, log_handler=None)
 
 
 if __name__ == "__main__":
