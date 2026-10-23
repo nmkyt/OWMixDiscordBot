@@ -242,7 +242,7 @@ class CheckinView(discord.ui.View):
 @bot.event
 async def on_ready():
     logger.info(f'Logged in as {bot.user.name}')
-    logger.info('Overwatch Mix Discord Bot v2.1')
+    logger.info('Overwatch Mix Discord Bot v2.2')
     logger.info('Developed by nmkyt')
     logger.info('Command list available at !mix_help in Discord app')
 
