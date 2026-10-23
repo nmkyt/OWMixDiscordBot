@@ -1,4 +1,5 @@
 import random
+import re
 from src.balancer import create_lobbies, ROLE_NEEDS
 from src.config import session
 from src.models import Queue, Player, MIN_RATING, MAX_RATING
@@ -89,6 +90,116 @@ def parse_rating_update(rating: str, role: str, current_priority):
     return parse_rating_input(rating)
 
 
+BATTLE_TAG_PATTERN = re.compile(r"^[\w]+#\d+$")
+ROLE_INPUT_LABELS = {'tank': 'Танк', 'damage': 'DPS', 'support': 'Саппорт'}
+
+
+def parse_battle_tag(battle_tag: str) -> str:
+    """BattleTag (Sacr1ficed#2456) -> имя игрока (Sacr1ficed); ValueError при неверном формате."""
+    if not BATTLE_TAG_PATTERN.match(battle_tag):
+        raise ValueError(f'Неверный формат BattleTag «{battle_tag}»: нужно имя и номер через #.')
+    return battle_tag.split('#')[0]
+
+
+def parse_ratings(tank_rating: str, damage_rating: str, support_rating: str, priority=None, protect_priority=False):
+    """Разбирает рейтинги трёх ролей -> (tank, damage, support). ValueError с названием роли
+    при неверном вводе или если все роли нулевые. protect_priority=True запрещает обнулить
+    рейтинг приоритетной роли (см. parse_rating_update)."""
+    values = {}
+    for role, raw in (('tank', tank_rating), ('damage', damage_rating), ('support', support_rating)):
+        try:
+            if protect_priority:
+                values[role] = parse_rating_update(raw, role, priority)
+            else:
+                values[role] = parse_rating_input(raw)
+        except ValueError as e:
+            raise ValueError(f'{ROLE_INPUT_LABELS[role]}: {e}') from e
+    if all(value is None for value in values.values()):
+        raise ValueError('Укажите рейтинг хотя бы на одной роли (0 — только для ролей, которые вы не играете).')
+    return values['tank'], values['damage'], values['support']
+
+
+def get_player(discord_id):
+    """Игрок по Discord ID или None."""
+    return session.query(Player).filter(Player.discord_id == str(discord_id)).first()
+
+
+def register_player(discord_id, name: str, tank_rating, damage_rating, support_rating) -> bool:
+    """Регистрирует игрока с уже разобранными рейтингами. Приоритетная роль — первая роль
+    с рейтингом (танк, урон, саппорт). Возвращает False, если игрок уже зарегистрирован."""
+    if get_player(discord_id) is not None:
+        return False
+    ratings = {'tank': tank_rating, 'damage': damage_rating, 'support': support_rating}
+    session.add(Player(
+        name=name,
+        tank_rating=tank_rating,
+        damage_rating=damage_rating,
+        support_rating=support_rating,
+        priority_role=next((role for role, value in ratings.items() if value is not None), None),
+        discord_id=str(discord_id),
+        check_in='no',
+    ))
+    session.commit()
+    return True
+
+
+def update_player_ratings(discord_id, tank_rating: str, damage_rating: str, support_rating: str):
+    """Разбирает и сохраняет рейтинги игрока (обнулить приоритетную роль нельзя).
+    Возвращает имя игрока или None, если он не зарегистрирован; ValueError при неверном вводе."""
+    user = get_player(discord_id)
+    if user is None:
+        return None
+    user.tank_rating, user.damage_rating, user.support_rating = parse_ratings(
+        tank_rating, damage_rating, support_rating, priority=user.priority_role, protect_priority=True)
+    session.commit()
+    return user.name
+
+
+def update_user_status(user_id, field, value):
+    """Меняет чек-ин (field='checked_in', value 'yes'/'no') или приоритетную роль (field='priority_role').
+
+    Возвращает True при успехе, 'not_registered', 'no_role' (чек-ин без выбранной роли)
+    или False (на выбранной роли нет рейтинга).
+    """
+    user = get_player(user_id)
+    if user is None:
+        return 'not_registered'
+
+    if field == 'checked_in':
+        if value == 'yes' and not user.priority_role:
+            return 'no_role'
+        user.check_in = value
+        session.commit()
+        return True
+
+    if field == 'priority_role':
+        if value == 'flex':
+            if user.tank_rating is not None and user.damage_rating is not None and user.support_rating is not None:
+                user.priority_role = value
+                session.commit()
+                return True
+            return False
+        rating_attr = {'tank': 'tank_rating', 'damage': 'damage_rating', 'support': 'support_rating'}.get(value)
+        if rating_attr and getattr(user, rating_attr) is not None:
+            user.priority_role = value
+            session.commit()
+            return True
+        return False
+
+    return False
+
+
+def uncheck_player(discord_id) -> bool:
+    """Снимает чек-ин с игрока и убирает его из очереди; False, если игрок не зарегистрирован."""
+    user = get_player(discord_id)
+    if user is None:
+        return False
+    user.check_in = 'no'
+    session.query(Queue).filter(Queue.discord_id == str(discord_id)).delete()
+    session.commit()
+    return True
+
+
 def check_queue():
     """Имена игроков, стоящих в очереди."""
     queue = []
@@ -99,6 +210,32 @@ def check_queue():
             if queued.discord_id == player.discord_id:
                 queue.append(player.name)
     return queue
+
+
+def add_to_queue(discord_id):
+    """Ставит игрока в конец очереди. Возвращает (статус, игрок), где статус —
+    'added', 'already_queued' или 'not_registered' (тогда игрок None)."""
+    user = get_player(discord_id)
+    if user is None:
+        return 'not_registered', None
+    if session.query(Queue).filter(Queue.discord_id == str(discord_id)).first() is not None:
+        return 'already_queued', user
+    session.add(Queue(discord_id=str(discord_id)))
+    session.commit()
+    return 'added', user
+
+
+def remove_from_queue(discord_id) -> bool:
+    """Убирает игрока из очереди; False, если его там не было."""
+    removed = session.query(Queue).filter(Queue.discord_id == str(discord_id)).delete()
+    session.commit()
+    return removed > 0
+
+
+def clear_queue():
+    """Очищает очередь."""
+    session.query(Queue).delete()
+    session.commit()
 
 
 def active_players():

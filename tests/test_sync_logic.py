@@ -239,3 +239,120 @@ class TestMixStatus:
             make_player(str(i), check_in='yes', priority_role='flex',
                         tank_rating=3000, damage_rating=3000, support_rating=3000)
         assert sl.mix_status()['short_roles'] == []
+
+
+
+class TestUpdateUserStatusRegistration:
+    def test_unregistered_user(self):
+        assert sl.update_user_status('999999', 'checked_in', 'yes') == 'not_registered'
+
+
+class TestCheckIn:
+    def test_check_in_requires_role(self, make_player):
+        """Регрессия: раньше можно было чек-инится вообще без выбранной роли."""
+        p = make_player('1', priority_role=None)
+        result = sl.update_user_status('1', 'checked_in', 'yes')
+        assert result == 'no_role'
+        assert p.check_in == 'no'
+
+    def test_check_in_succeeds_with_role(self, make_player):
+        p = make_player('1', priority_role='tank', tank_rating=3000)
+        result = sl.update_user_status('1', 'checked_in', 'yes')
+        assert result is True
+        assert p.check_in == 'yes'
+
+    def test_check_out_works_without_role(self, make_player):
+        """Выйти из миксов можно всегда, даже если роль не выбрана."""
+        p = make_player('1', priority_role=None, check_in='yes')
+        result = sl.update_user_status('1', 'checked_in', 'no')
+        assert result is True
+        assert p.check_in == 'no'
+
+
+class TestPriorityRoleSelection:
+    def test_cannot_select_role_without_rating(self, make_player):
+        p = make_player('1', tank_rating=None)
+        result = sl.update_user_status('1', 'priority_role', 'tank')
+        assert result is False
+        assert p.priority_role is None
+
+    def test_can_select_role_with_rating(self, make_player):
+        p = make_player('1', tank_rating=3000)
+        result = sl.update_user_status('1', 'priority_role', 'tank')
+        assert result is True
+        assert p.priority_role == 'tank'
+
+    def test_flex_requires_all_three_ratings(self, make_player):
+        p = make_player('1', tank_rating=3000, damage_rating=3000, support_rating=None)
+        result = sl.update_user_status('1', 'priority_role', 'flex')
+        assert result is False
+        assert p.priority_role is None
+
+    def test_flex_succeeds_with_all_ratings(self, make_player):
+        p = make_player('1', tank_rating=3000, damage_rating=3100, support_rating=3200)
+        result = sl.update_user_status('1', 'priority_role', 'flex')
+        assert result is True
+        assert p.priority_role == 'flex'
+
+
+class TestParseBattleTagAndRatings:
+    def test_battle_tag_to_name(self):
+        assert sl.parse_battle_tag('Sacr1ficed#2456') == 'Sacr1ficed'
+
+    def test_bad_battle_tag(self):
+        with pytest.raises(ValueError, match='BattleTag'):
+            sl.parse_battle_tag('Sacr1ficed')
+
+    def test_ratings_parsed(self):
+        assert sl.parse_ratings('4000', 'd2', '0') == (4000, 3300, None)
+
+    def test_rating_error_names_role(self):
+        with pytest.raises(ValueError, match='^DPS: '):
+            sl.parse_ratings('4000', 'xyz', '0')
+
+    def test_all_zero_rejected(self):
+        with pytest.raises(ValueError, match='хотя бы на одной роли'):
+            sl.parse_ratings('0', '0', '0')
+
+
+class TestPlayerAndQueueOperations:
+    def test_register_sets_first_rated_role_as_priority(self):
+        assert sl.register_player('1', 'Alice', None, 3000, 2500) is True
+        assert sl.get_player('1').priority_role == 'damage'
+
+    def test_register_twice_rejected(self, make_player):
+        make_player('1')
+        assert sl.register_player('1', 'Alice', 3000, None, None) is False
+
+    def test_update_ratings(self, make_player):
+        make_player('1', name='Alice', priority_role='tank', tank_rating=3000)
+        assert sl.update_player_ratings('1', '3500', '0', 'g4') == 'Alice'
+        p = sl.get_player('1')
+        assert (p.tank_rating, p.damage_rating, p.support_rating) == (3500, None, 1600)
+
+    def test_update_ratings_unknown_player(self):
+        assert sl.update_player_ratings('404', '3000', '0', '0') is None
+
+    def test_add_to_queue_statuses(self, make_player):
+        assert sl.add_to_queue('1') == ('not_registered', None)
+        make_player('1')
+        assert sl.add_to_queue('1')[0] == 'added'
+        assert sl.add_to_queue('1')[0] == 'already_queued'
+
+    def test_remove_and_clear_queue(self, make_player):
+        make_player('1')
+        make_player('2')
+        sl.add_to_queue('1')
+        sl.add_to_queue('2')
+        assert sl.remove_from_queue('1') is True
+        assert sl.remove_from_queue('1') is False
+        sl.clear_queue()
+        assert session.query(Queue).count() == 0
+
+    def test_uncheck_player(self, make_player):
+        make_player('1', check_in='yes')
+        sl.add_to_queue('1')
+        assert sl.uncheck_player('1') is True
+        assert sl.get_player('1').check_in == 'no'
+        assert session.query(Queue).count() == 0
+        assert sl.uncheck_player('404') is False

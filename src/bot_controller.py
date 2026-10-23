@@ -4,25 +4,31 @@ import discord
 
 from discord.ext import commands
 
-from src.config import bot, BOT_TOKEN, ADMIN_IDS, session, run_db, logger
-from src.models import Player, Queue
+from src.config import bot, BOT_TOKEN, ADMIN_IDS, run_db, logger
 from src.balancer import reset_history
 from src.sync_logic import (
-    create_lobbies_caller,
-    get_map,
-    get_rating,
-    check_queue,
+    add_to_queue,
     active_players,
-    mix_status as get_mix_status,
+    check_queue,
+    clear_queue,
+    create_lobbies_caller,
     end,
     format_rating,
-    parse_rating_input,
-    parse_rating_update,
+    get_map,
+    get_player,
+    get_rating,
+    mix_status as get_mix_status,
+    parse_battle_tag,
+    parse_ratings,
+    register_player,
+    remove_from_queue,
+    uncheck_player,
+    update_player_ratings,
+    update_user_status,
 )
 
 admins = ADMIN_IDS
 
-BATTLE_TAG_PATTERN = re.compile(r"^[\w]+#\d+$")
 DISCORD_ID_PATTERN = re.compile(r"^(?:<@!?(\d+)>|(\d+))$")
 
 # пример вызова, который показывается в сообщениях об ошибках ввода
@@ -45,8 +51,6 @@ PARAM_LABELS = {
     'user_id': 'discord_id',
     'lobby_count': 'количество лобби',
 }
-
-ROLE_INPUT_LABELS = {'tank': 'Танк', 'damage': 'DPS', 'support': 'Саппорт'}
 
 
 def error_text(problem: str, usage: str = None) -> str:
@@ -95,57 +99,6 @@ def parse_discord_id(raw: str) -> str:
     if match is None:
         raise InputError(f'Некорректный discord_id «{raw}»: нужен числовой ID или упоминание @игрока.')
     return match.group(1) or match.group(2)
-
-
-def parse_ratings(tank_rating: str, damage_rating: str, support_rating: str, priority=None, protect_priority=False):
-    """Разбирает рейтинги трёх ролей. Ошибка в любой из них -> InputError с названием роли.
-    protect_priority=True запрещает обнулить рейтинг приоритетной роли (см. parse_rating_update)."""
-    values = {}
-    for role, raw in (('tank', tank_rating), ('damage', damage_rating), ('support', support_rating)):
-        try:
-            if protect_priority:
-                values[role] = parse_rating_update(raw, role, priority)
-            else:
-                values[role] = parse_rating_input(raw)
-        except ValueError as e:
-            raise InputError(f'{ROLE_INPUT_LABELS[role]}: {e}')
-    if all(value is None for value in values.values()):
-        raise InputError('Укажите рейтинг хотя бы на одной роли (0 — только для ролей, которые вы не играете).')
-    return values['tank'], values['damage'], values['support']
-
-
-def update_user_status(user_id, field, value):
-    """Меняет чек-ин (field='checked_in', value 'yes'/'no') или приоритетную роль (field='priority_role').
-
-    Возвращает True при успехе, 'not_registered', 'no_role' (чек-ин без выбранной роли)
-    или False (на выбранной роли нет рейтинга). Вызывается только через run_db.
-    """
-    user = session.query(Player).filter(Player.discord_id == str(user_id)).first()
-    if user is None:
-        return 'not_registered'
-
-    if field == 'checked_in':
-        if value == 'yes' and not user.priority_role:
-            return 'no_role'
-        user.check_in = value
-        session.commit()
-        return True
-
-    if field == 'priority_role':
-        if value == 'flex':
-            if user.tank_rating is not None and user.damage_rating is not None and user.support_rating is not None:
-                user.priority_role = value
-                session.commit()
-                return True
-            return False
-        rating_attr = {'tank': 'tank_rating', 'damage': 'damage_rating', 'support': 'support_rating'}.get(value)
-        if rating_attr and getattr(user, rating_attr) is not None:
-            user.priority_role = value
-            session.commit()
-            return True
-        return False
-
-    return False
 
 
 class CheckinView(discord.ui.View):
@@ -381,30 +334,20 @@ async def queue_add(ctx, discord_id: str):
     """Добавить игрока в очередь (админ)."""
     discord_id = parse_discord_id(discord_id)
 
-    def _add():
-        user = session.query(Player).filter(Player.discord_id == discord_id).first()
-        if user is None:
-            return 'not_registered', None
-        if session.query(Queue).filter(Queue.discord_id == discord_id).first() is not None:
-            return 'already_queued', user.name
-        session.add(Queue(discord_id=discord_id))
-        session.commit()
-        return user.check_in, user.name
-
     try:
-        result, name = await run_db(_add)
+        status, player = await run_db(add_to_queue, discord_id)
     except Exception:
         logger.exception('Error adding to queue')
         await ctx.send(system_error_text('добавить игрока в очередь'))
         return
 
-    if result == 'not_registered':
+    if status == 'not_registered':
         raise InputError(f'Игрок с discord_id {discord_id} не зарегистрирован.')
-    if result == 'already_queued':
-        raise InputError(f'{name} уже в очереди.', with_usage=False)
-    logger.info(f'{_who(ctx)} added {name} ({discord_id}) to the queue')
-    message = f'{name} успешно добавлен в очередь'
-    if result != 'yes':
+    if status == 'already_queued':
+        raise InputError(f'{player.name} уже в очереди.', with_usage=False)
+    logger.info(f'{_who(ctx)} added {player.name} ({discord_id}) to the queue')
+    message = f'{player.name} успешно добавлен в очередь'
+    if player.check_in != 'yes':
         message += ' (внимание: игрок не прошёл чек-ин — пока он не отметится, очередь его не учтёт)'
     await ctx.send(message)
 
@@ -415,16 +358,8 @@ async def queue_remove(ctx, discord_id: str):
     """Убрать игрока из очереди (админ)."""
     discord_id = parse_discord_id(discord_id)
 
-    def _remove():
-        user = session.query(Queue).filter(Queue.discord_id == discord_id).first()
-        if user is None:
-            return False
-        session.delete(user)
-        session.commit()
-        return True
-
     try:
-        found = await run_db(_remove)
+        found = await run_db(remove_from_queue, discord_id)
     except Exception:
         logger.exception('Error removing from queue')
         await ctx.send(system_error_text('убрать игрока из очереди'))
@@ -440,12 +375,8 @@ async def queue_remove(ctx, discord_id: str):
 @admin_only()
 async def queue_clear(ctx):
     """Очистить очередь (админ)."""
-    def _clear():
-        session.query(Queue).delete()
-        session.commit()
-
     try:
-        await run_db(_clear)
+        await run_db(clear_queue)
     except Exception:
         logger.exception('Error clearing queue')
         await ctx.send(system_error_text('очистить очередь'))
@@ -516,32 +447,24 @@ async def mix_stop(ctx):
 @bot.command()
 async def my_rank(ctx):
     """Показать свой рейтинг по ролям."""
-    discord_id = str(ctx.author.id)
-
-    def _get():
-        user = session.query(Player).filter(Player.discord_id == discord_id).first()
-        if user is None:
-            return None
-        lines = [f'Имя пользователя: {user.name}']
-        if user.tank_rating is not None:
-            lines.append(f'Рейтинг на танке: {format_rating(user.tank_rating)}')
-        if user.damage_rating is not None:
-            lines.append(f'Рейтинг на дпсах: {format_rating(user.damage_rating)}')
-        if user.support_rating is not None:
-            lines.append(f'Рейтинг на саппортах: {format_rating(user.support_rating)}')
-        return '\n'.join(lines)
-
     try:
-        result = await run_db(_get)
+        user = await run_db(get_player, ctx.author.id)
     except Exception:
         logger.exception(f'Error fetching rank for {ctx.author.name}')
         await ctx.send(system_error_text('получить данные о рейтинге'))
         return
 
-    if result is None:
+    if user is None:
         await ctx.send(NOT_REGISTERED)
         return
-    await ctx.send(result)
+    lines = [f'Имя пользователя: {user.name}']
+    if user.tank_rating is not None:
+        lines.append(f'Рейтинг на танке: {format_rating(user.tank_rating)}')
+    if user.damage_rating is not None:
+        lines.append(f'Рейтинг на дпсах: {format_rating(user.damage_rating)}')
+    if user.support_rating is not None:
+        lines.append(f'Рейтинг на саппортах: {format_rating(user.support_rating)}')
+    await ctx.send('\n'.join(lines))
 
 
 @bot.command(ignore_extra=False)
@@ -550,69 +473,40 @@ async def user_update(ctx, user_id: str, tank_rating: str, damage_rating: str, s
     """Изменить рейтинг любого игрока (админ)."""
     user_id = parse_discord_id(user_id)
 
-    def _update():
-        user = session.query(Player).filter(Player.discord_id == user_id).first()
-        if user is None:
-            return 'not_found'
-        try:
-            values = parse_ratings(tank_rating, damage_rating, support_rating,
-                                   priority=user.priority_role, protect_priority=True)
-        except InputError as e:
-            return e
-        user.tank_rating, user.damage_rating, user.support_rating = values
-        session.commit()
-        return user.name
-
     try:
-        result = await run_db(_update)
+        name = await run_db(update_player_ratings, user_id, tank_rating, damage_rating, support_rating)
+    except ValueError as e:
+        raise InputError(str(e))
     except Exception:
         logger.exception('Error updating user rating')
         await ctx.send(system_error_text('обновить рейтинг пользователя'))
         return
 
-    if result == 'not_found':
+    if name is None:
         raise InputError(f'Игрок с discord_id {user_id} не зарегистрирован.')
-    if isinstance(result, InputError):
-        raise result
 
-    logger.info(f'{_who(ctx)} updated rating of {result} ({user_id}): '
+    logger.info(f'{_who(ctx)} updated rating of {name} ({user_id}): '
                 f'tank={tank_rating}, damage={damage_rating}, support={support_rating}')
-    await ctx.send(f'Администратор обновил рейтинг у {result}.')
+    await ctx.send(f'Администратор обновил рейтинг у {name}.')
 
 
 @bot.command(ignore_extra=False)
 async def update(ctx, tank_rating: str, damage_rating: str, support_rating: str):
     """Обновить свой рейтинг по ролям."""
-    discord_id = str(ctx.author.id)
-    username = ctx.author.name
-
-    def _update():
-        user = session.query(Player).filter(Player.discord_id == discord_id).first()
-        if user is None:
-            return 'not_registered'
-        try:
-            values = parse_ratings(tank_rating, damage_rating, support_rating,
-                                   priority=user.priority_role, protect_priority=True)
-        except InputError as e:
-            return e
-        user.tank_rating, user.damage_rating, user.support_rating = values
-        session.commit()
-        return True
-
     try:
-        result = await run_db(_update)
+        name = await run_db(update_player_ratings, ctx.author.id, tank_rating, damage_rating, support_rating)
+    except ValueError as e:
+        raise InputError(str(e))
     except Exception:
         logger.exception('Error updating user rating')
         await ctx.send(system_error_text('обновить рейтинг'))
         return
 
-    if result == 'not_registered':
+    if name is None:
         await ctx.send(NOT_REGISTERED)
         return
-    if isinstance(result, InputError):
-        raise result
 
-    logger.info(f'User {username} ({discord_id}) updated their rating: '
+    logger.info(f'User {name} ({ctx.author.id}) updated their rating: '
                 f'tank={tank_rating}, damage={damage_rating}, support={support_rating}')
     await ctx.send('Вы успешно изменили свой рейтинг')
 
@@ -620,52 +514,25 @@ async def update(ctx, tank_rating: str, damage_rating: str, support_rating: str)
 @bot.command(ignore_extra=False, aliases=['registration'])
 async def register(ctx, battle_tag: str, tank_rating: str, damage_rating: str, support_rating: str):
     """Зарегистрироваться на миксы (то же — !registration)."""
-    discord_id = str(ctx.author.id)
-
-    if not BATTLE_TAG_PATTERN.match(battle_tag):
-        raise InputError(f'Неверный формат BattleTag «{battle_tag}»: нужно имя и номер через #.')
-
-    tank_value, damage_value, support_value = parse_ratings(tank_rating, damage_rating, support_rating)
-
-    priority = None
-    if tank_value is not None:
-        priority = 'tank'
-    elif damage_value is not None:
-        priority = 'damage'
-    elif support_value is not None:
-        priority = 'support'
-
-    username = battle_tag.split('#')[0]
-
-    def _register():
-        if session.query(Player).filter(Player.discord_id == discord_id).first() is not None:
-            return 'already_registered'
-        user_info = Player(
-            name=username,
-            tank_rating=tank_value,
-            damage_rating=damage_value,
-            support_rating=support_value,
-            priority_role=priority,
-            discord_id=discord_id,
-            check_in='no',
-        )
-        session.add(user_info)
-        session.commit()
-        return True
+    try:
+        username = parse_battle_tag(battle_tag)
+        ratings = parse_ratings(tank_rating, damage_rating, support_rating)
+    except ValueError as e:
+        raise InputError(str(e))
 
     try:
-        result = await run_db(_register)
+        registered = await run_db(register_player, ctx.author.id, username, *ratings)
     except Exception:
         logger.exception('Error registering user')
         await ctx.send(system_error_text('зарегистрировать пользователя'))
         return
 
-    if result == 'already_registered':
+    if not registered:
         await ctx.send(error_text('Вы уже зарегистрированы. Чтобы изменить рейтинг, используйте !update.',
                                   USAGE['update']))
         return
 
-    logger.info(f'User {username} ({discord_id}) registered')
+    logger.info(f'User {username} ({ctx.author.id}) registered')
     await ctx.send('Вы успешно зарегистрировались на миксы')
 
 
@@ -675,20 +542,8 @@ async def uncheck(ctx, discord_id: str):
     """Снять чек-ин с игрока и убрать его из очереди (админ)."""
     discord_id = parse_discord_id(discord_id)
 
-    def _uncheck():
-        user = session.query(Player).filter(Player.discord_id == discord_id).first()
-        if user is None:
-            return False
-        user.check_in = 'no'
-        session.commit()
-        queued = session.query(Queue).filter(Queue.discord_id == discord_id).first()
-        if queued:
-            session.delete(queued)
-            session.commit()
-        return True
-
     try:
-        found = await run_db(_uncheck)
+        found = await run_db(uncheck_player, discord_id)
     except Exception:
         logger.exception('Error unchecking user')
         await ctx.send(system_error_text('снять чек-ин'))
