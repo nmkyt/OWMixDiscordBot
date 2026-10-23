@@ -26,7 +26,7 @@ class FakeContext(commands.Context):
         self.sent = []
 
     async def send(self, content=None, **kwargs):
-        self.sent.append(content)
+        self.sent.append(content if content is not None else kwargs.get('embed'))
 
 
 def run_command(content, author_id=PLAYER_ID):
@@ -214,3 +214,18 @@ class TestLogging:
         make_player('42', name='Alice', check_in='yes')
         last('!queue_add 42', ADMIN_ID)
         assert any(f'({ADMIN_ID}) added Alice (42) to the queue' in r.getMessage() for r in caplog.records)
+
+
+class TestMixHelp:
+    def test_lists_every_command(self):
+        embed = last('!mix_help')
+        text = embed.description + ''.join(f.name + f.value for f in embed.fields)
+        for command in bot.commands:
+            for name in [command.name, *command.aliases]:
+                if name != 'help':
+                    assert f'!{name}' in text, f'!{name} нет в !mix_help'
+
+    def test_fits_discord_embed_limits(self):
+        embed = last('!mix_help')
+        assert len(embed) <= 6000
+        assert all(len(f.value) <= 1024 and len(f.name) <= 256 for f in embed.fields)

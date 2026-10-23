@@ -68,6 +68,8 @@ def system_error_text(action: str) -> str:
 
 NOT_REGISTERED = error_text('Вы не зарегистрированы. Сначала зарегистрируйтесь через !register.', USAGE['register'])
 
+HELP_COLOR = discord.Color(0xF99E1A)  # оранжевый Overwatch
+
 PRIORITY_LABELS = {'tank': '🛡️ Tank', 'damage': '🏹 DPS', 'support': '💉 Support', 'flex': '🎲 Flex', None: 'не выбрана'}
 
 
@@ -315,18 +317,40 @@ async def check(ctx):
 @bot.command()
 async def mix_help(ctx):
     """Список команд бота."""
-    await ctx.send(f"--------------------------------**Список команд**--------------------------------\n"
-                   f"• Для регистрации в боте используйте **«!register BattleTag TankRating DPSRating "
-                   f"SupportRating»** (или **«!registration ...»**)\n"
-                   f"где Tank, DPS и Support Rating - цифра или дивизион вашего рейтинга в Overwatch. пр.: m2, 2700, g4 итп.\n"
-                   f"• Для обновления своего рейтинга используйте **«!update TankRating DPSRating SupportRating»**\n"
-                   f"• Для того, чтобы узнать свой рейтинг в боте используйте **«!my_rank»**\n"
-                   f"• Для проведения чек-ина используйте команду **«!check»**\n"
-                   f"• Для просмотра статуса миксов (регистрации, чек-ин, роли, лобби) используйте **«!mix_status»**\n"
-                   f"• Для просмотра очереди на след. игру используйте **«!queue»**\n"
-                   f"• Для очистки очереди используйте **«!queue_clear»**\n"
-                   f"• Для добавления игрока в очередь используйте **«!queue_add discord_id»**\n"
-                   f"• Для удаления игрока из очереди используйте **«!queue_remove discord_id»**\n")
+    embed = discord.Embed(
+        title='📖 Команды бота миксов',
+        description=('Рейтинг роли — число от 500 до 5000 или дивизион Overwatch: `b5` … `chm1` '
+                     '(например, `g4`, `d2`, `gm3`). `0` — роль не играете.'),
+        color=HELP_COLOR,
+    )
+    embed.add_field(name='👤 Для игроков', inline=False, value=(
+        '`!register BattleTag Танк DPS Саппорт` — регистрация (или `!registration`)\n'
+        '`!update Танк DPS Саппорт` — обновить свой рейтинг\n'
+        '`!my_rank` — показать свой рейтинг\n'
+        '`!mix_help` — этот список\n'
+        'Пример: `!register Sacr1ficed#2456 4000 d2 0`'
+    ))
+    embed.add_field(name='✅ Чек-ин', inline=False, value=(
+        'Когда админ откроет чек-ин, выберите приоритетную роль кнопкой '
+        '🛡️ Tank / 🏹 DPS / 💉 Support / 🎲 Flex и нажмите ✅ Check-in. '
+        'Уходите с миксов — нажмите ❌ Check-out.'
+    ))
+    embed.add_field(name='🛠️ Админам: вечер миксов', inline=False, value=(
+        '`!check` — открыть чек-ин\n'
+        '`!mix_status` — сколько игроков, роли, на сколько лобби хватает\n'
+        '`!players` — список отметившихся\n'
+        '`!create_lobby N` — собрать N лобби\n'
+        '`!mix_stop` — завершить вечер и снять чек-ин со всех'
+    ))
+    embed.add_field(name='🛠️ Админам: очередь и игроки', inline=False, value=(
+        '`!queue` — очередь на следующую игру\n'
+        '`!queue_add @игрок` / `!queue_remove @игрок` — добавить / убрать из очереди\n'
+        '`!queue_clear` — очистить очередь\n'
+        '`!uncheck @игрок` — снять чек-ин и убрать из очереди\n'
+        '`!user_update @игрок Танк DPS Саппорт` — изменить рейтинг игрока'
+    ))
+    embed.set_footer(text='Вместо @игрок можно указать Discord ID числом.')
+    await ctx.send(embed=embed)
 
 
 @bot.command()
