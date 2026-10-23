@@ -67,7 +67,7 @@ python -m src.bot_controller
 
 | Команда | Описание |
 |---|---|
-| `!register BattleTag TankRating DPSRating SupportRating` | Регистрация. Рейтинг — число (500-5000) или дивизион (`b5`…`chm1`); `0`, если роль не играется. |
+| `!register BattleTag TankRating DPSRating SupportRating` | Регистрация (то же самое — `!registration`). Рейтинг — число (500-5000) или дивизион (`b5`…`chm1`); `0`, если роль не играется. |
 | `!update TankRating DPSRating SupportRating` | Обновление своего рейтинга по ролям. |
 | `!my_rank` | Показать свой текущий рейтинг. |
 | `!mix_help` | Список команд. |

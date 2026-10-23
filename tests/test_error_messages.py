@@ -133,6 +133,15 @@ class TestRegisterAndUpdate:
     def test_valid_registration_still_works(self):
         assert last('!register Tag#1 3000 d2 0') == 'Вы успешно зарегистрировались на миксы'
 
+    def test_registration_alias_works_like_register(self):
+        assert last('!registration Tag#1 3000 d2 0') == 'Вы успешно зарегистрировались на миксы'
+        assert session.query(Player).filter(Player.discord_id == str(PLAYER_ID)).count() == 1
+
+    def test_registration_alias_error_shows_alias_in_example(self):
+        msg = last('!registration Tag#1 3000')
+        assert msg.startswith('❌ Не хватает аргумента')
+        assert 'Пример: `!registration Sacr1ficed#2456' in msg
+
     def test_already_registered(self, make_player):
         make_player(str(PLAYER_ID))
         assert 'уже зарегистрированы' in last('!register Tag#1 3000 3000 3000')

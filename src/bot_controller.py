@@ -271,7 +271,10 @@ async def on_ready():
 
 
 def _usage(ctx):
-    return USAGE.get(ctx.command.name) if ctx.command else None
+    if ctx.command is None or ctx.command.name not in USAGE:
+        return None
+    # вызвали через алиас (!registration) — в примере показываем то же имя, что набрал пользователь
+    return USAGE[ctx.command.name].replace(f'!{ctx.command.name}', f'!{ctx.invoked_with}', 1)
 
 
 @bot.event
@@ -326,7 +329,7 @@ async def check(ctx):
 async def mix_help(ctx):
     await ctx.send(f"--------------------------------**Список команд**--------------------------------\n"
                    f"• Для регистрации в боте используйте **«!register BattleTag TankRating DPSRating "
-                   f"SupportRating»**\n"
+                   f"SupportRating»** (или **«!registration ...»**)\n"
                    f"где Tank, DPS и Support Rating - цифра или дивизион вашего рейтинга в OW. пр.: m2, 2700, g4 итп.\n"
                    f"• Для обновления своего рейтинга используйте **«!update TankRating DPSRating SupportRating»**\n"
                    f"• Для того, чтобы узнать свой рейтинг в боте используйте **«!my_rank»**\n"
@@ -577,7 +580,7 @@ async def update(ctx, tank_rating: str, damage_rating: str, support_rating: str)
     await ctx.send('Вы успешно изменили свой рейтинг')
 
 
-@bot.command(ignore_extra=False)
+@bot.command(ignore_extra=False, aliases=['registration'])
 async def register(ctx, battle_tag: str, tank_rating: str, damage_rating: str, support_rating: str):
     discord_id = str(ctx.author.id)
 
