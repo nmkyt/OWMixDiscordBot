@@ -70,9 +70,11 @@ def parse_rating_input(rating: str):
     try:
         value = int(rating)
     except ValueError:
-        raise ValueError('Неверный формат рейтинга')
+        raise ValueError(f'неверный рейтинг «{rating}» — укажите число от {MIN_RATING} до {MAX_RATING}, '
+                         f'дивизион (например, d2 или gm3) или 0, если роль не играется.')
     if not (MIN_RATING <= value <= MAX_RATING):
-        raise ValueError(f'Рейтинг должен быть в диапазоне от {MIN_RATING} до {MAX_RATING} (или 0, если роль не играется)')
+        raise ValueError(f'рейтинг {value} вне диапазона — допустимо от {MIN_RATING} до {MAX_RATING} '
+                         f'(или 0, если роль не играется).')
     return value
 
 
@@ -83,7 +85,8 @@ def parse_rating_update(rating: str, role: str, current_priority):
     где игрок меняет рейтинг самостоятельно.
     """
     if rating.split(',')[0].strip() == '0' and current_priority in (role, 'flex'):
-        raise ValueError('Вы не можете обнулить рейтинг на роли, которая выбрана приоритетной')
+        raise ValueError('нельзя обнулить рейтинг на приоритетной роли (или при выбранном flex) — '
+                         'сначала выберите другую приоритетную роль на чек-ине.')
     return parse_rating_input(rating)
 
 
