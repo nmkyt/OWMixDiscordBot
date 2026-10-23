@@ -5,7 +5,6 @@ from itertools import combinations
 
 logger = logging.getLogger(__name__)
 
-# data/, а не src/ — это рантайм-состояние (история миксов), а не исходный код.
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 HISTORY_FILE = os.path.join(DATA_DIR, "recent_pairs.json")
 ALPHA_TEAMMATE = 50
@@ -16,11 +15,13 @@ RECENT_PAIRS = {}
 
 
 def _pair_key(a, b):
+    """Ключ пары игроков в RECENT_PAIRS, не зависящий от порядка аргументов."""
     a, b = (str(a), str(b))
     return a+"-"+b if a < b else b+"-"+a
 
 
 def init_history():
+    """Загружает историю анти-повтора из HISTORY_FILE; при отсутствии или порче файла начинает с пустой."""
     global RECENT_PAIRS, GAME_INDEX
     if os.path.exists(HISTORY_FILE):
         try:
@@ -123,14 +124,15 @@ def update_history_with_lobby(lobby):
 
 
 def get_players():
+    """Отметившиеся игроки в случайном порядке."""
     free_players = session.query(Player).filter(Player.check_in == 'yes').all()
     random.shuffle(free_players)
     return free_players
 
 
 def get_queue():
-    # порядок очереди = порядок приоритета: кто ждёт дольше, тот добавлен раньше
-    # (create_lobbies_caller записывает ещё не сыгравших из очереди перед новыми).
+    """Делит отметившихся на (очередь, остальные). Очередь — в порядке приоритета
+    (по Queue.id: кто ждёт дольше, стоит раньше); игроки из очереди без чек-ина пропускаются."""
     queued_players = session.query(Queue).order_by(Queue.id).all()
     free_players = get_players()
     queue = []
@@ -146,8 +148,7 @@ def get_queue():
 
 def find_closest_tanks(free_players, queued_players):
     """ Находит двух ближайших игроков на роли 'Танк', включая queued_players (не более 2). """
-    # rating is not None — доп. защита от рассинхрона данных (приоритетная роль выбрана,
-    # а рейтинг на ней не указан): без неё abs(None - x) уронит подбор лобби.
+    # rating is not None: приоритетная роль может быть выбрана без рейтинга на ней
     tanks = [p for p in free_players if p.priority_role in ("tank", "flex") and p.tank_rating is not None]
     queued_tanks = [p for p in queued_players
                     if p.priority_role in ("tank", "flex") and p.tank_rating is not None][:2]
@@ -332,9 +333,8 @@ def _guaranteed_lobby(free_players, queued_players):
     remaining_queued = list(queued_players)
     assigned = {'tank': [], 'damage': [], 'support': []}
 
-    # Игроки из очереди обязаны сыграть — каждый на своей приоритетной роли (flex — туда,
-    # где сейчас не хватает мест сильнее всего). Роль уже занята другими queued — остаются
-    # в очереди для следующего вызова, а не теряются.
+    # игроки из очереди играют на приоритетной роли (flex — где мест не хватает сильнее);
+    # если роль уже занята, остаются в очереди
     for player in list(remaining_queued):
         role = player.priority_role
         if role == 'flex':
@@ -403,39 +403,39 @@ def _split_teams(tank_a, tank_b, damage_four, support_four):
 
 
 def create_lobbies(lobby_count):
+    """Собирает до lobby_count лобби из отметившихся игроков.
+
+    Каждое лобби сначала подбирается жадно (близкие рейтинги + анти-повтор), а если это
+    не удалось — гарантированным алгоритмом _guaranteed_lobby. Если не справился и он,
+    сборка останавливается, а уже собранные лобби всё равно возвращаются.
+
+    Из очереди в лобби берётся не больше мест на роль, в порядке очереди; таблицу Queue
+    функция не меняет (это делает create_lobbies_caller).
+
+    Возвращает (lobbies, leftover): leftover — не попавшие в лобби, сначала игроки
+    из очереди в прежнем порядке, затем остальные.
+    Бросает ValueError, если отметившихся меньше, чем lobby_count * 10.
+    """
     init_history()
 
     queued_players, free_players = get_queue()
     total = len(queued_players) + len(free_players)
     if (lobby_count * 10) > total:
         raise ValueError(f"для {lobby_count} лобби нужно {lobby_count * 10} отметившихся игроков, сейчас {total}.")
-    # Размер очереди не ограничен: find_closest_* / _guaranteed_lobby берут из очереди
-    # не больше, чем мест на роли (2/4/4), в порядке очереди, а лишних оставляют в
-    # queued_players — они переходят в следующее лобби этого вызова или в следующий вызов.
-    # Таблицу Queue эта функция не меняет — её перезаписывает create_lobbies_caller
-    # только после успешной сборки, поэтому при любом отказе очередь остаётся нетронутой.
 
     lobbies = []
     for _ in range(lobby_count):
         try:
-            # основной путь: жадный подбор близких по рейтингу игроков с анти-повтором.
-            # Работает на копиях списков — при неудаче ничего не потребляет из оригиналов,
-            # чтобы резервный вариант ниже мог использовать полный, нетронутый пул игроков.
+            # на копиях: при неудаче резервному варианту нужен нетронутый пул
             free_copy, queued_copy = list(free_players), list(queued_players)
             tanks, free_copy, queued_copy = find_closest_tanks(free_copy, queued_copy)
             damage, free_copy, queued_copy = find_closest_damage(free_copy, queued_copy, lobby_so_far=tanks)
             support, free_copy, queued_copy = find_closest_support(free_copy, queued_copy, lobby_so_far=tanks + damage)
             free_players, queued_players = free_copy, queued_copy
         except ValueError:
-            # жадный подбор не нашёл состав — не значит, что его не существует (см. docstring
-            # _guaranteed_lobby). Пробуем гарантированный резервный вариант на полном пуле.
             try:
                 tanks, damage, support, free_players, queued_players = _guaranteed_lobby(free_players, queued_players)
             except ValueError as e:
-                # Ни жадный, ни гарантированный способ не собрали это лобби — дальше
-                # пытаться бессмысленно (игроков останется ещё меньше). Не роняем всю
-                # функцию: лобби, уже собранные в этом вызове, не должны пропадать
-                # только из-за того, что не хватило на ещё одно.
                 logger.warning(f'Could not form lobby {len(lobbies) + 1}/{lobby_count}: {e}')
                 break
 
@@ -445,6 +445,4 @@ def create_lobbies(lobby_count):
         lobbies.append(lobby)
         update_history_with_lobby(lobby)
 
-    # игроки из очереди, не поместившиеся ни в одно из lobby_count лобби в этом вызове,
-    # обязаны попасть в следующий вызов !create_lobby первыми — поэтому идут в начале списка
     return lobbies, queued_players + free_players

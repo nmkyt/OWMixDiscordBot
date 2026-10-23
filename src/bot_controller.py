@@ -22,13 +22,10 @@ from src.sync_logic import (
 
 admins = ADMIN_IDS
 
-# Пример battle_tag: Sacr1ficed#2456
 BATTLE_TAG_PATTERN = re.compile(r"^[\w]+#\d+$")
-# discord_id в админ-командах: числовой ID или упоминание <@123> / <@!123>
 DISCORD_ID_PATTERN = re.compile(r"^(?:<@!?(\d+)>|(\d+))$")
 
-# Пример правильного вызова для каждой команды с аргументами — подставляется
-# в сообщения об ошибках ввода, чтобы пользователь сразу видел, как надо.
+# пример вызова, который показывается в сообщениях об ошибках ввода
 USAGE = {
     'register': '!register Sacr1ficed#2456 4000 d2 3700',
     'update': '!update 4000 d2 3700',
@@ -79,7 +76,7 @@ class InputError(commands.CommandError):
 
 
 class NotAdmin(commands.CheckFailure):
-    pass
+    """Команду вызвал не администратор."""
 
 
 def admin_only():
@@ -93,6 +90,7 @@ def admin_only():
 
 
 def parse_discord_id(raw: str) -> str:
+    """Числовой ID или упоминание (<@123>, <@!123>) -> ID строкой; иначе InputError."""
     match = DISCORD_ID_PATTERN.match(raw.strip())
     if match is None:
         raise InputError(f'Некорректный discord_id «{raw}»: нужен числовой ID или упоминание @игрока.')
@@ -117,7 +115,11 @@ def parse_ratings(tank_rating: str, damage_rating: str, support_rating: str, pri
 
 
 def update_user_status(user_id, field, value):
-    """Синхронная работа с БД; вызывается только через run_db в отдельном потоке."""
+    """Меняет чек-ин (field='checked_in', value 'yes'/'no') или приоритетную роль (field='priority_role').
+
+    Возвращает True при успехе, 'not_registered', 'no_role' (чек-ин без выбранной роли)
+    или False (на выбранной роли нет рейтинга). Вызывается только через run_db.
+    """
     user = session.query(Player).filter(Player.discord_id == str(user_id)).first()
     if user is None:
         return 'not_registered'
@@ -147,11 +149,12 @@ def update_user_status(user_id, field, value):
 
 
 class CheckinView(discord.ui.View):
+    """Кнопки чек-ина: выбор приоритетной роли, check-in и check-out. Ответы видит только нажавший."""
     message: discord.Message = None
 
     async def on_timeout(self):
-        """Без этого после таймаута кнопки выглядят живыми, а клик по ним даёт лишь
-        безликое «Interaction failed» — вместо этого явно показываем, что чек-ин закрыт."""
+        """Отключает кнопки и помечает чек-ин закрытым, чтобы клик по устаревшей кнопке
+        не заканчивался безликим «Interaction failed»."""
         for item in self.children:
             item.disabled = True
         if self.message is None:
@@ -177,6 +180,7 @@ class CheckinView(discord.ui.View):
 
     @discord.ui.button(label='✅Check-in', style=discord.ButtonStyle.success)
     async def check_in(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Отмечает игрока на миксы; требует выбранную приоритетную роль."""
         user_id = interaction.user.id
         user_name = interaction.user.name
         await interaction.response.defer()
@@ -199,6 +203,7 @@ class CheckinView(discord.ui.View):
 
     @discord.ui.button(label='❌Check-out', style=discord.ButtonStyle.danger)
     async def check_out(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Снимает чек-ин игрока."""
         user_id = interaction.user.id
         user_name = interaction.user.name
         await interaction.response.defer()
@@ -216,6 +221,8 @@ class CheckinView(discord.ui.View):
 
     async def _set_priority_role(self, interaction: discord.Interaction, role: str,
                                   role_label: str, requirement_msg: str):
+        """Общий обработчик кнопок выбора приоритетной роли.
+        requirement_msg — ответ, если на этой роли у игрока нет рейтинга."""
         user_id = interaction.user.id
         user_name = interaction.user.name
         await interaction.response.defer()
@@ -271,9 +278,10 @@ async def on_ready():
 
 
 def _usage(ctx):
+    """Пример вызова команды для сообщения об ошибке — под тем именем, которое набрал
+    пользователь (для !registration покажет !registration, а не !register)."""
     if ctx.command is None or ctx.command.name not in USAGE:
         return None
-    # вызвали через алиас (!registration) — в примере показываем то же имя, что набрал пользователь
     return USAGE[ctx.command.name].replace(f'!{ctx.command.name}', f'!{ctx.invoked_with}', 1)
 
 
@@ -298,7 +306,6 @@ async def on_command_error(ctx, error):
         label = PARAM_LABELS.get(param.name, param.name) if param else 'аргумента'
         message = error_text(f'Некорректное значение «{label}».', _usage(ctx))
     elif isinstance(error, commands.UserInputError):
-        # прочие ошибки разбора (незакрытые кавычки и т.п.)
         message = error_text('Не удалось разобрать команду — проверьте кавычки и пробелы.', _usage(ctx))
     elif isinstance(error, commands.CommandOnCooldown):
         message = error_text('Команда на перезарядке, попробуйте чуть позже.')
@@ -318,6 +325,7 @@ async def on_command_error(ctx, error):
 @bot.command()
 @admin_only()
 async def check(ctx):
+    """Открыть чек-ин на миксы (админ)."""
     view = CheckinView(timeout=20000)
     await ctx.send(
         'Чекин на миксы начался! Обратите внимание, что пройти check-in могут только зарегистрированные игроки.')
@@ -327,10 +335,11 @@ async def check(ctx):
 
 @bot.command()
 async def mix_help(ctx):
+    """Список команд бота."""
     await ctx.send(f"--------------------------------**Список команд**--------------------------------\n"
                    f"• Для регистрации в боте используйте **«!register BattleTag TankRating DPSRating "
                    f"SupportRating»** (или **«!registration ...»**)\n"
-                   f"где Tank, DPS и Support Rating - цифра или дивизион вашего рейтинга в OW. пр.: m2, 2700, g4 итп.\n"
+                   f"где Tank, DPS и Support Rating - цифра или дивизион вашего рейтинга в Overwatch. пр.: m2, 2700, g4 итп.\n"
                    f"• Для обновления своего рейтинга используйте **«!update TankRating DPSRating SupportRating»**\n"
                    f"• Для того, чтобы узнать свой рейтинг в боте используйте **«!my_rank»**\n"
                    f"• Для проведения чек-ина используйте команду **«!check»**\n"
@@ -344,6 +353,7 @@ async def mix_help(ctx):
 @bot.command()
 @admin_only()
 async def queue(ctx):
+    """Показать очередь на следующую игру (админ)."""
     try:
         queued_players = await run_db(check_queue)
     except Exception as e:
@@ -356,6 +366,7 @@ async def queue(ctx):
 @bot.command(ignore_extra=False)
 @admin_only()
 async def queue_add(ctx, discord_id: str):
+    """Добавить игрока в очередь (админ)."""
     discord_id = parse_discord_id(discord_id)
 
     def _add():
@@ -388,6 +399,7 @@ async def queue_add(ctx, discord_id: str):
 @bot.command(ignore_extra=False)
 @admin_only()
 async def queue_remove(ctx, discord_id: str):
+    """Убрать игрока из очереди (админ)."""
     discord_id = parse_discord_id(discord_id)
 
     def _remove():
@@ -413,6 +425,7 @@ async def queue_remove(ctx, discord_id: str):
 @bot.command()
 @admin_only()
 async def queue_clear(ctx):
+    """Очистить очередь (админ)."""
     def _clear():
         session.query(Queue).delete()
         session.commit()
@@ -429,6 +442,7 @@ async def queue_clear(ctx):
 @bot.command()
 @admin_only()
 async def mix_status(ctx):
+    """Статус миксов: регистрации, чек-ин, роли, очередь, сколько лобби можно собрать (админ)."""
     try:
         status = await run_db(get_mix_status)
     except Exception as e:
@@ -459,6 +473,7 @@ async def mix_status(ctx):
 @bot.command()
 @admin_only()
 async def players(ctx):
+    """Список отметившихся игроков (админ)."""
     try:
         result = await run_db(active_players)
     except Exception as e:
@@ -471,6 +486,7 @@ async def players(ctx):
 @bot.command()
 @admin_only()
 async def mix_stop(ctx):
+    """Завершить вечер: снять чек-ин со всех и очистить историю анти-повтора (админ)."""
     try:
         await run_db(end)
         await run_db(reset_history)
@@ -483,6 +499,7 @@ async def mix_stop(ctx):
 
 @bot.command()
 async def my_rank(ctx):
+    """Показать свой рейтинг по ролям."""
     discord_id = str(ctx.author.id)
 
     def _get():
@@ -514,6 +531,7 @@ async def my_rank(ctx):
 @bot.command(ignore_extra=False)
 @admin_only()
 async def user_update(ctx, user_id: str, tank_rating: str, damage_rating: str, support_rating: str):
+    """Изменить рейтинг любого игрока (админ)."""
     user_id = parse_discord_id(user_id)
 
     def _update():
@@ -547,6 +565,7 @@ async def user_update(ctx, user_id: str, tank_rating: str, damage_rating: str, s
 
 @bot.command(ignore_extra=False)
 async def update(ctx, tank_rating: str, damage_rating: str, support_rating: str):
+    """Обновить свой рейтинг по ролям."""
     discord_id = str(ctx.author.id)
     username = ctx.author.name
 
@@ -582,6 +601,7 @@ async def update(ctx, tank_rating: str, damage_rating: str, support_rating: str)
 
 @bot.command(ignore_extra=False, aliases=['registration'])
 async def register(ctx, battle_tag: str, tank_rating: str, damage_rating: str, support_rating: str):
+    """Зарегистрироваться на миксы (то же — !registration)."""
     discord_id = str(ctx.author.id)
 
     if not BATTLE_TAG_PATTERN.match(battle_tag):
@@ -634,6 +654,7 @@ async def register(ctx, battle_tag: str, tank_rating: str, damage_rating: str, s
 @bot.command(ignore_extra=False)
 @admin_only()
 async def uncheck(ctx, discord_id: str):
+    """Снять чек-ин с игрока и убрать его из очереди (админ)."""
     discord_id = parse_discord_id(discord_id)
 
     def _uncheck():
@@ -663,6 +684,7 @@ async def uncheck(ctx, discord_id: str):
 @bot.command(ignore_extra=False)
 @admin_only()
 async def create_lobby(ctx, lobby_count: int):
+    """Собрать N сбалансированных лобби из отметившихся игроков (админ)."""
     if lobby_count < 1:
         raise InputError('Количество лобби должно быть не меньше 1.')
 

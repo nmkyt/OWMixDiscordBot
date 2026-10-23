@@ -17,7 +17,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("owmix")
 
-# Настройка Discord Bot
 intents = discord.Intents.default()
 intents.message_content = True
 intents.messages = True
@@ -25,18 +24,17 @@ intents.reactions = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Токен бота
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN не задан. Проверьте файл .env.")
 
-# URL базы данных
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL не задан. Проверьте файл .env.")
 
 
 def _parse_admin_ids(raw: str) -> set[int]:
+    """Разбирает ADMIN_IDS ('1, 2 3') в множество ID, пропуская некорректные элементы."""
     ids = set()
     for part in raw.replace(",", " ").split():
         try:
@@ -46,21 +44,14 @@ def _parse_admin_ids(raw: str) -> set[int]:
     return ids
 
 
-# Discord ID администраторов бота (через запятую) — задаются в .env, а не в коде,
-# чтобы каждый, кто проводит миксы, мог добавить себя сам без правки исходников.
 ADMIN_IDS = _parse_admin_ids(os.getenv("ADMIN_IDS", ""))
 if not ADMIN_IDS:
     logger.warning('ADMIN_IDS не задан или пуст в .env — админ-команды бота будут недоступны никому.')
 
-# Настройка подключения к базе данных PostgreSQL
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 Base = sqlalchemy.orm.declarative_base()
 
-# scoped_session выдаёт отдельную сессию каждому потоку. Все обращения к БД
-# выполняются через run_db() в отдельном потоке (см. ниже), поэтому вместо
-# одной общей Session на весь процесс (небезопасно при параллельных командах
-# и блокирует event loop бота при каждом запросе) каждая такая операция
-# получает свою изолированную сессию.
+# своя сессия на поток: вся работа с БД идёт через run_db() в отдельных потоках
 session = scoped_session(sessionmaker(bind=engine, expire_on_commit=False))
 
 

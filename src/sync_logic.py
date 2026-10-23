@@ -28,10 +28,12 @@ maps = [
 
 
 def get_map():
+    """Случайная карта для лобби."""
     return random.choice(maps)
 
 
 def convert_rank_to_value(rank: str) -> int:
+    """Дивизион (например, 'd2') -> числовой рейтинг; ValueError для неизвестного дивизиона."""
     if rank in rank_to_value:
         return rank_to_value.get(rank, "Invalid rank")
     else:
@@ -91,6 +93,7 @@ def parse_rating_update(rating: str, role: str, current_priority):
 
 
 def check_queue():
+    """Имена игроков, стоящих в очереди."""
     queue = []
     queued_players = session.query(Queue).all()
     players = session.query(Player).all()
@@ -102,6 +105,7 @@ def check_queue():
 
 
 def active_players():
+    """Возвращает (имена отметившихся игроков, их количество)."""
     active = []
     players = session.query(Player).filter(Player.check_in == 'yes').all()
     for player in players:
@@ -123,8 +127,7 @@ def mix_status():
         if player.priority_role in by_priority:
             by_priority[player.priority_role] += 1
 
-    # сколько чекнувшихся вообще могут сыграть роль (рейтинг на ней указан) — подсказка,
-    # какой роли не хватает, если лобби не собирается
+    # рейтинг на роли указан — значит, игрок может её закрыть
     can_play = {
         'tank': sum(1 for p in checked_in if p.tank_rating is not None),
         'damage': sum(1 for p in checked_in if p.damage_rating is not None),
@@ -134,8 +137,7 @@ def mix_status():
     queued = sum(1 for q in session.query(Queue).all() if q.discord_id in checked_ids)
 
     lobbies = len(checked_in) // PLAYERS_PER_LOBBY
-    # на одно лобби нужно 2 танка, 4 дпса и 4 саппорта; считаем от max(lobbies, 1),
-    # чтобы подсказка была и тогда, когда игроков ещё не хватает даже на одно лобби
+    # max(lobbies, 1): подсказываем нехватку ролей, даже когда людей нет и на одно лобби
     short_roles = [role for role, need in ROLE_NEEDS.items() if can_play[role] < need * max(lobbies, 1)]
     return {
         'total': total,
@@ -150,6 +152,7 @@ def mix_status():
 
 
 def end():
+    """Снимает чек-ин со всех игроков (конец вечера миксов)."""
     players = session.query(Player).all()
     for player in players:
         player.check_in = 'no'
@@ -157,6 +160,7 @@ def end():
 
 
 def get_rating(lobby):
+    """Возвращает (разница рейтинга команд в пересчёте на игрока, средний рейтинг игрока в матче)."""
     team1_rating = (sum(player.tank_rating for player in [lobby["team1"]["tank"]] if player) +
                    sum(player.damage_rating for player in lobby["team1"]["damage"]) +
                    sum(player.support_rating for player in lobby["team1"]["support"]))
@@ -168,18 +172,11 @@ def get_rating(lobby):
 
 
 def create_lobbies_caller(lobby_count):
-    """
-    create_lobbies может вернуть меньше лобби, чем запрошено (если для остальных не
-    хватило игроков) — это не ошибка, а частичный успех, и его тоже нужно обработать:
-    оставшихся игроков вернуть в очередь. Полностью неудачные случаи (ValueError из
-    create_lobbies) не ловим — вызывающий код (!create_lobby) сам решает, что сказать
-    пользователю.
+    """Собирает лобби через create_lobbies и записывает не попавших в лобби в очередь.
 
-    Очередь перезаписывается целиком и одним коммитом, только если собрано хотя бы одно
-    лобби: при ошибке или нуле лобби в ней остаётся прежний состав (иначе все отметившиеся
-    оказались бы "в очереди" и приоритет реально ждущих игроков потерялся бы).
-    Порядок записи — порядок приоритета (см. create_lobbies): сначала ещё не сыгравшие
-    из старой очереди, потом новые не попавшие в лобби.
+    Частичный успех (собрано меньше лобби, чем запрошено) — не ошибка. Очередь
+    перезаписывается, только если собрано хотя бы одно лобби, иначе остаётся прежней.
+    ValueError из create_lobbies пробрасывается: что ответить пользователю, решает !create_lobby.
     """
     lobbies, queued_players = create_lobbies(lobby_count)
     if len(lobbies) < lobby_count:

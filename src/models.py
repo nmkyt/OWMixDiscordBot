@@ -7,6 +7,8 @@ ROLES = ('tank', 'damage', 'support', 'flex')
 
 
 class Player(Base):
+    """Зарегистрированный игрок: рейтинг по ролям (None — роль не играет), приоритетная роль и чек-ин."""
+
     __tablename__ = 'players'
     __table_args__ = (
         CheckConstraint("check_in IN ('yes', 'no')", name='ck_players_check_in'),
@@ -39,6 +41,8 @@ class Player(Base):
 
 
 class Queue(Base):
+    """Очередь на следующее лобби; порядок по id — порядок приоритета."""
+
     __tablename__ = 'queue'
     id = Column(Integer, primary_key=True, autoincrement=True)
     discord_id = Column(String, nullable=False, unique=True)
