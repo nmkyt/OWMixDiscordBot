@@ -324,10 +324,10 @@ async def mix_help(ctx):
         color=HELP_COLOR,
     )
     embed.add_field(name='👤 Для игроков', inline=False, value=(
-        '`!register BattleTag Танк DPS Саппорт` — регистрация (или `!registration`)\n'
-        '`!update Танк DPS Саппорт` — обновить свой рейтинг\n'
-        '`!my_rank` — показать свой рейтинг\n'
-        '`!mix_help` — этот список\n'
+        '`!register BattleTag Танк Урон Саппорт` — регистрация (можно использовать: `!registration`)\n'
+        '`!update Танк Урон Саппорт` — обновить свой рейтинг\n'
+        '`!my_rank` — узнать ваш текущий рейтинг в боте\n'
+        '`!mix_help` — помощь\n'
         'Пример: `!register Sacr1ficed#2456 4000 d2 0`'
     ))
     embed.add_field(name='✅ Чек-ин', inline=False, value=(
@@ -335,9 +335,9 @@ async def mix_help(ctx):
         '🛡️ Tank / 🏹 DPS / 💉 Support / 🎲 Flex и нажмите ✅ Check-in. '
         'Уходите с миксов — нажмите ❌ Check-out.'
     ))
-    embed.add_field(name='🛠️ Админам: вечер миксов', inline=False, value=(
+    embed.add_field(name='🛠️ Админам: проведение миксов', inline=False, value=(
         '`!check` — открыть чек-ин\n'
-        '`!mix_status` — сколько игроков, роли, на сколько лобби хватает\n'
+        '`!mix_status` — статус миксов\n'
         '`!players` — список отметившихся\n'
         '`!create_lobby N` — собрать N лобби\n'
         '`!mix_stop` — завершить вечер и снять чек-ин со всех'
