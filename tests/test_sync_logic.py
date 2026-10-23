@@ -3,7 +3,7 @@ import pytest
 
 from src import sync_logic as sl
 from src.config import session
-from src.models import MIN_RATING, MAX_RATING
+from src.models import MIN_RATING, MAX_RATING, Queue
 
 
 class TestConvertRankToValue:
@@ -132,3 +132,48 @@ class TestDbBackedHelpers:
         session.commit()
 
         assert sl.check_queue() == ['Alice']
+
+
+class TestMixStatus:
+    def test_empty_db(self):
+        status = sl.mix_status()
+        assert status['total'] == 0
+        assert status['checked_in'] == 0
+        assert status['queued'] == 0
+        assert status['lobbies'] == 0
+
+    def test_counts_and_roles(self, make_player):
+        make_player('1', check_in='yes', priority_role='tank', tank_rating=3000, damage_rating=2500)
+        make_player('2', check_in='yes', priority_role='flex',
+                    tank_rating=3000, damage_rating=3000, support_rating=3000)
+        make_player('3', check_in='yes', priority_role='support', support_rating=2000)
+        make_player('4', check_in='no', priority_role='damage', damage_rating=2000)
+
+        status = sl.mix_status()
+        assert status['total'] == 4
+        assert status['checked_in'] == 3
+        assert status['by_priority'] == {'tank': 1, 'damage': 0, 'support': 1, 'flex': 1}
+        assert status['can_play'] == {'tank': 2, 'damage': 2, 'support': 2}
+        assert status['lobbies'] == 0
+        assert status['to_next_lobby'] == 7
+
+    def test_queue_counts_only_checked_in(self, make_player):
+        make_player('1', check_in='yes', priority_role='tank', tank_rating=3000)
+        make_player('2', check_in='no', priority_role='tank', tank_rating=3000)
+        session.add_all([Queue(discord_id='1'), Queue(discord_id='2')])
+        session.commit()
+        assert sl.mix_status()['queued'] == 1
+
+    def test_lobby_count(self, make_player):
+        for i in range(23):
+            make_player(str(i), check_in='yes', priority_role='damage', damage_rating=2000)
+        status = sl.mix_status()
+        assert status['lobbies'] == 2
+        assert status['to_next_lobby'] == 7
+        assert status['short_roles'] == ['tank', 'support']
+
+    def test_no_short_roles_when_enough(self, make_player):
+        for i in range(10):
+            make_player(str(i), check_in='yes', priority_role='flex',
+                        tank_rating=3000, damage_rating=3000, support_rating=3000)
+        assert sl.mix_status()['short_roles'] == []

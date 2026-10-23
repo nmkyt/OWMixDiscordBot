@@ -1,6 +1,6 @@
 import logging
 import random
-from src.balancer import create_lobbies
+from src.balancer import create_lobbies, ROLE_NEEDS
 from src.config import session
 from src.models import Queue, Player, MIN_RATING, MAX_RATING
 
@@ -104,6 +104,46 @@ def active_players():
     for player in players:
         active.append(player.name)
     return active, len(active)
+
+
+PLAYERS_PER_LOBBY = 10
+
+
+def mix_status():
+    """Сводка для !mix_status: регистрации, чек-ин, приоритетные роли, очередь и сколько лобби можно собрать."""
+    total = session.query(Player).count()
+    checked_in = session.query(Player).filter(Player.check_in == 'yes').all()
+    checked_ids = {player.discord_id for player in checked_in}
+
+    by_priority = {role: 0 for role in ('tank', 'damage', 'support', 'flex')}
+    for player in checked_in:
+        if player.priority_role in by_priority:
+            by_priority[player.priority_role] += 1
+
+    # сколько чекнувшихся вообще могут сыграть роль (рейтинг на ней указан) — подсказка,
+    # какой роли не хватает, если лобби не собирается
+    can_play = {
+        'tank': sum(1 for p in checked_in if p.tank_rating is not None),
+        'damage': sum(1 for p in checked_in if p.damage_rating is not None),
+        'support': sum(1 for p in checked_in if p.support_rating is not None),
+    }
+
+    queued = sum(1 for q in session.query(Queue).all() if q.discord_id in checked_ids)
+
+    lobbies = len(checked_in) // PLAYERS_PER_LOBBY
+    # на одно лобби нужно 2 танка, 4 дпса и 4 саппорта; считаем от max(lobbies, 1),
+    # чтобы подсказка была и тогда, когда игроков ещё не хватает даже на одно лобби
+    short_roles = [role for role, need in ROLE_NEEDS.items() if can_play[role] < need * max(lobbies, 1)]
+    return {
+        'total': total,
+        'checked_in': len(checked_in),
+        'by_priority': by_priority,
+        'can_play': can_play,
+        'queued': queued,
+        'lobbies': lobbies,
+        'to_next_lobby': PLAYERS_PER_LOBBY - len(checked_in) % PLAYERS_PER_LOBBY,
+        'short_roles': short_roles,
+    }
 
 
 def end():

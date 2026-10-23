@@ -87,6 +87,7 @@ python -m src.bot_controller
 | `!queue_add discord_id` | Добавить игрока в очередь вручную. |
 | `!queue_remove discord_id` | Убрать игрока из очереди. |
 | `!queue_clear` | Полностью очистить очередь. |
+| `!mix_status` | Статус миксов: регистрации, чек-ин, приоритетные роли, очередь, на сколько лобби хватает игроков и каких ролей не хватает. |
 | `!players` | Список отметившихся (checked-in) игроков. |
 | `!uncheck discord_id` | Снять чек-ин и убрать игрока из очереди. |
 | `!user_update discord_id TankRating DPSRating SupportRating` | Изменить рейтинг любого игрока. |

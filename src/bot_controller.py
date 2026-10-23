@@ -13,6 +13,7 @@ from src.sync_logic import (
     get_rating,
     check_queue,
     active_players,
+    mix_status as get_mix_status,
     end,
     format_rating,
     parse_rating_input,
@@ -206,6 +207,7 @@ async def mix_help(ctx):
                    f"• Для обновления своего рейтинга используйте **«!update TankRating DPSRating SupportRating»**\n"
                    f"• Для того, чтобы узнать свой рейтинг в боте используйте **«!my_rank»**\n"
                    f"• Для проведения чек-ина используйте команду **«!check»**\n"
+                   f"• Для просмотра статуса миксов (регистрации, чек-ин, роли, лобби) используйте **«!mix_status»**\n"
                    f"• Для просмотра очереди на след. игру используйте **«!queue»**\n"
                    f"• Для очистки очереди используйте **«!queue_clear»**\n"
                    f"• Для добавления игрока в очередь используйте **«!queue_add discord_id»**\n"
@@ -273,6 +275,36 @@ async def queue_clear(ctx):
         except Exception as e:
             logger.error(f'Error clearing queue: {e}')
             await ctx.send("Не удалось очистить очередь")
+
+
+@bot.command()
+async def mix_status(ctx):
+    if ctx.author.id in admins:
+        try:
+            status = await run_db(get_mix_status)
+        except Exception as e:
+            logger.error(f'Error fetching mix status: {e}')
+            await ctx.send("Не удалось получить статус миксов.")
+            return
+
+        roles = status['by_priority']
+        can_play = status['can_play']
+        lobbies_line = f'🎮 Игроков хватает на лобби: **{status["lobbies"]}**'
+        if status['checked_in'] > 0:
+            lobbies_line += f' (до следующего не хватает {status["to_next_lobby"]})'
+        if status['short_roles']:
+            role_labels = {'tank': '🛡️ танков', 'damage': '🏹 дпсов', 'support': '💉 саппортов'}
+            lobbies_line += '\n⚠️ Не хватает игроков на роли: ' + ', '.join(role_labels[r] for r in status['short_roles'])
+        await ctx.send(
+            f'**📊 Статус миксов**\n'
+            f'👥 Зарегистрировано: **{status["total"]}**\n'
+            f'✅ Прошли чек-ин: **{status["checked_in"]}**\n'
+            f'⭐ Приоритетные роли: 🛡️ {roles["tank"]} | 🏹 {roles["damage"]} | '
+            f'💉 {roles["support"]} | 🎲 {roles["flex"]}\n'
+            f'🎯 Могут играть: 🛡️ {can_play["tank"]} | 🏹 {can_play["damage"]} | 💉 {can_play["support"]}\n'
+            f'⏳ В очереди на след. игру: **{status["queued"]}**\n'
+            f'{lobbies_line}'
+        )
 
 
 @bot.command()
