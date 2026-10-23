@@ -146,9 +146,20 @@ class TestRegisterAndUpdate:
         make_player(str(PLAYER_ID))
         assert 'уже зарегистрированы' in last('!register Tag#1 3000 3000 3000')
 
-    def test_update_cannot_zero_priority_role(self, make_player):
+    def test_update_zeroing_priority_role_switches_it(self, make_player):
         make_player(str(PLAYER_ID), priority_role='tank', tank_rating=3000)
-        assert 'нельзя обнулить' in last('!update 0 3000 3000')
+        msg = last('!update 0 3000 3000')
+        assert msg.startswith('Вы успешно изменили свой рейтинг')
+        assert 'Приоритетная роль изменена: 🛡️ Tank → 🏹 DPS' in msg
+
+    def test_update_without_priority_change_has_no_note(self, make_player):
+        make_player(str(PLAYER_ID), priority_role='tank', tank_rating=3000)
+        assert last('!update 3500 0 0') == 'Вы успешно изменили свой рейтинг'
+
+    def test_admin_update_reports_priority_change(self, make_player):
+        make_player('42', name='Alice', priority_role='flex', tank_rating=3000, damage_rating=3000, support_rating=3000)
+        msg = last('!user_update 42 3000 0 3000', ADMIN_ID)
+        assert 'Приоритетная роль изменена: 🎲 Flex → 🛡️ Tank (для Flex нужен рейтинг на всех трёх ролях)' in msg
 
     def test_update_not_registered(self):
         assert last('!update 3000 3000 3000') == bc.NOT_REGISTERED

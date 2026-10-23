@@ -78,18 +78,6 @@ def parse_rating_input(rating: str):
     return value
 
 
-def parse_rating_update(rating: str, role: str, current_priority):
-    """
-    Как parse_rating_input, но дополнительно запрещает обнулить рейтинг той роли,
-    которая сейчас выбрана приоритетной (или flex) — используется в !update,
-    где игрок меняет рейтинг самостоятельно.
-    """
-    if rating.split(',')[0].strip() == '0' and current_priority in (role, 'flex'):
-        raise ValueError('нельзя обнулить рейтинг на приоритетной роли (или при выбранном flex) — '
-                         'сначала выберите другую приоритетную роль на чек-ине.')
-    return parse_rating_input(rating)
-
-
 BATTLE_TAG_PATTERN = re.compile(r"^[\w]+#\d+$")
 ROLE_INPUT_LABELS = {'tank': 'Танк', 'damage': 'DPS', 'support': 'Саппорт'}
 
@@ -101,17 +89,13 @@ def parse_battle_tag(battle_tag: str) -> str:
     return battle_tag.split('#')[0]
 
 
-def parse_ratings(tank_rating: str, damage_rating: str, support_rating: str, priority=None, protect_priority=False):
+def parse_ratings(tank_rating: str, damage_rating: str, support_rating: str):
     """Разбирает рейтинги трёх ролей -> (tank, damage, support). ValueError с названием роли
-    при неверном вводе или если все роли нулевые. protect_priority=True запрещает обнулить
-    рейтинг приоритетной роли (см. parse_rating_update)."""
+    при неверном вводе или если все роли нулевые."""
     values = {}
     for role, raw in (('tank', tank_rating), ('damage', damage_rating), ('support', support_rating)):
         try:
-            if protect_priority:
-                values[role] = parse_rating_update(raw, role, priority)
-            else:
-                values[role] = parse_rating_input(raw)
+            values[role] = parse_rating_input(raw)
         except ValueError as e:
             raise ValueError(f'{ROLE_INPUT_LABELS[role]}: {e}') from e
     if all(value is None for value in values.values()):
@@ -124,18 +108,28 @@ def get_player(discord_id):
     return session.query(Player).filter(Player.discord_id == str(discord_id)).first()
 
 
+def pick_priority_role(current, tank_rating, damage_rating, support_rating):
+    """Приоритетная роль, совместимая с рейтингами: текущая, если на ней остался рейтинг
+    (для flex — на всех трёх ролях), иначе первая роль с рейтингом (танк, урон, саппорт)."""
+    ratings = {'tank': tank_rating, 'damage': damage_rating, 'support': support_rating}
+    if current == 'flex' and all(value is not None for value in ratings.values()):
+        return current
+    if ratings.get(current) is not None:
+        return current
+    return next((role for role, value in ratings.items() if value is not None), None)
+
+
 def register_player(discord_id, name: str, tank_rating, damage_rating, support_rating) -> bool:
     """Регистрирует игрока с уже разобранными рейтингами. Приоритетная роль — первая роль
     с рейтингом (танк, урон, саппорт). Возвращает False, если игрок уже зарегистрирован."""
     if get_player(discord_id) is not None:
         return False
-    ratings = {'tank': tank_rating, 'damage': damage_rating, 'support': support_rating}
     session.add(Player(
         name=name,
         tank_rating=tank_rating,
         damage_rating=damage_rating,
         support_rating=support_rating,
-        priority_role=next((role for role, value in ratings.items() if value is not None), None),
+        priority_role=pick_priority_role(None, tank_rating, damage_rating, support_rating),
         discord_id=str(discord_id),
         check_in='no',
     ))
@@ -144,15 +138,21 @@ def register_player(discord_id, name: str, tank_rating, damage_rating, support_r
 
 
 def update_player_ratings(discord_id, tank_rating: str, damage_rating: str, support_rating: str):
-    """Разбирает и сохраняет рейтинги игрока (обнулить приоритетную роль нельзя).
-    Возвращает имя игрока или None, если он не зарегистрирован; ValueError при неверном вводе."""
+    """Разбирает и сохраняет рейтинги игрока. Если на приоритетной роли рейтинга больше нет,
+    роль меняется по pick_priority_role.
+
+    Возвращает (имя, прежняя приоритетная роль, новая приоритетная роль) или None,
+    если игрок не зарегистрирован; ValueError при неверном вводе.
+    """
     user = get_player(discord_id)
     if user is None:
         return None
-    user.tank_rating, user.damage_rating, user.support_rating = parse_ratings(
-        tank_rating, damage_rating, support_rating, priority=user.priority_role, protect_priority=True)
+    ratings = parse_ratings(tank_rating, damage_rating, support_rating)
+    old_priority = user.priority_role
+    user.tank_rating, user.damage_rating, user.support_rating = ratings
+    user.priority_role = pick_priority_role(old_priority, *ratings)
     session.commit()
-    return user.name
+    return user.name, old_priority, user.priority_role
 
 
 def update_user_status(user_id, field, value):

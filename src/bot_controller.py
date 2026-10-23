@@ -68,6 +68,20 @@ def system_error_text(action: str) -> str:
 
 NOT_REGISTERED = error_text('Вы не зарегистрированы. Сначала зарегистрируйтесь через !register.', USAGE['register'])
 
+PRIORITY_LABELS = {'tank': '🛡️ Tank', 'damage': '🏹 DPS', 'support': '💉 Support', 'flex': '🎲 Flex', None: 'не выбрана'}
+
+
+def priority_change_note(old_priority, new_priority) -> str:
+    """Пояснение для ответа на !update / !user_update, если приоритетная роль сменилась после изменения рейтинга."""
+    if old_priority is None:
+        reason = 'раньше она не была выбрана'
+    elif old_priority == 'flex':
+        reason = 'для Flex нужен рейтинг на всех трёх ролях'
+    else:
+        reason = 'на прежней роли больше нет рейтинга'
+    return (f'Приоритетная роль изменена: {PRIORITY_LABELS[old_priority]} → {PRIORITY_LABELS[new_priority]} '
+            f'({reason}). Выбрать другую можно кнопками на чек-ине.')
+
 
 class InputError(commands.CommandError):
     """Ошибка ввода пользователя. Бросается из команды и показывается в чате
@@ -474,7 +488,7 @@ async def user_update(ctx, user_id: str, tank_rating: str, damage_rating: str, s
     user_id = parse_discord_id(user_id)
 
     try:
-        name = await run_db(update_player_ratings, user_id, tank_rating, damage_rating, support_rating)
+        result = await run_db(update_player_ratings, user_id, tank_rating, damage_rating, support_rating)
     except ValueError as e:
         raise InputError(str(e))
     except Exception:
@@ -482,19 +496,24 @@ async def user_update(ctx, user_id: str, tank_rating: str, damage_rating: str, s
         await ctx.send(system_error_text('обновить рейтинг пользователя'))
         return
 
-    if name is None:
+    if result is None:
         raise InputError(f'Игрок с discord_id {user_id} не зарегистрирован.')
 
+    name, old_priority, new_priority = result
     logger.info(f'{_who(ctx)} updated rating of {name} ({user_id}): '
-                f'tank={tank_rating}, damage={damage_rating}, support={support_rating}')
-    await ctx.send(f'Администратор обновил рейтинг у {name}.')
+                f'tank={tank_rating}, damage={damage_rating}, support={support_rating}, '
+                f'priority {old_priority} -> {new_priority}')
+    message = f'Администратор обновил рейтинг у {name}.'
+    if new_priority != old_priority:
+        message += '\n' + priority_change_note(old_priority, new_priority)
+    await ctx.send(message)
 
 
 @bot.command(ignore_extra=False)
 async def update(ctx, tank_rating: str, damage_rating: str, support_rating: str):
     """Обновить свой рейтинг по ролям."""
     try:
-        name = await run_db(update_player_ratings, ctx.author.id, tank_rating, damage_rating, support_rating)
+        result = await run_db(update_player_ratings, ctx.author.id, tank_rating, damage_rating, support_rating)
     except ValueError as e:
         raise InputError(str(e))
     except Exception:
@@ -502,13 +521,18 @@ async def update(ctx, tank_rating: str, damage_rating: str, support_rating: str)
         await ctx.send(system_error_text('обновить рейтинг'))
         return
 
-    if name is None:
+    if result is None:
         await ctx.send(NOT_REGISTERED)
         return
 
+    name, old_priority, new_priority = result
     logger.info(f'User {name} ({ctx.author.id}) updated their rating: '
-                f'tank={tank_rating}, damage={damage_rating}, support={support_rating}')
-    await ctx.send('Вы успешно изменили свой рейтинг')
+                f'tank={tank_rating}, damage={damage_rating}, support={support_rating}, '
+                f'priority {old_priority} -> {new_priority}')
+    message = 'Вы успешно изменили свой рейтинг'
+    if new_priority != old_priority:
+        message += '\n' + priority_change_note(old_priority, new_priority)
+    await ctx.send(message)
 
 
 @bot.command(ignore_extra=False, aliases=['registration'])

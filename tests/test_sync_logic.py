@@ -46,20 +46,21 @@ class TestParseRatingInput:
         assert sl.parse_rating_input('3000,ignored') == 3000
 
 
-class TestParseRatingUpdate:
-    def test_allows_zero_when_not_priority(self):
-        assert sl.parse_rating_update('0', 'tank', current_priority='damage') is None
+class TestPickPriorityRole:
+    def test_keeps_role_that_still_has_rating(self):
+        assert sl.pick_priority_role('support', 3000, None, 2500) == 'support'
 
-    def test_blocks_zero_on_own_priority_role(self):
-        with pytest.raises(ValueError):
-            sl.parse_rating_update('0', 'tank', current_priority='tank')
+    def test_switches_to_first_rated_role_when_priority_zeroed(self):
+        assert sl.pick_priority_role('tank', None, 3000, 2500) == 'damage'
 
-    def test_blocks_zero_when_priority_is_flex(self):
-        with pytest.raises(ValueError):
-            sl.parse_rating_update('0', 'support', current_priority='flex')
+    def test_flex_kept_with_all_ratings(self):
+        assert sl.pick_priority_role('flex', 3000, 3000, 3000) == 'flex'
 
-    def test_normal_value_passes_through(self):
-        assert sl.parse_rating_update('gm1', 'tank', current_priority='tank') == 4400
+    def test_flex_dropped_when_any_role_zeroed(self):
+        assert sl.pick_priority_role('flex', 3000, 3000, None) == 'tank'
+
+    def test_no_priority_gets_first_rated_role(self):
+        assert sl.pick_priority_role(None, None, None, 2000) == 'support'
 
 
 class TestGetRating:
@@ -326,9 +327,15 @@ class TestPlayerAndQueueOperations:
 
     def test_update_ratings(self, make_player):
         make_player('1', name='Alice', priority_role='tank', tank_rating=3000)
-        assert sl.update_player_ratings('1', '3500', '0', 'g4') == 'Alice'
+        assert sl.update_player_ratings('1', '3500', '0', 'g4') == ('Alice', 'tank', 'tank')
         p = sl.get_player('1')
         assert (p.tank_rating, p.damage_rating, p.support_rating) == (3500, None, 1600)
+
+    def test_zeroing_priority_role_switches_priority(self, make_player):
+        make_player('1', name='Alice', priority_role='tank', tank_rating=3000, check_in='yes')
+        assert sl.update_player_ratings('1', '0', '0', 'g4') == ('Alice', 'tank', 'support')
+        p = sl.get_player('1')
+        assert (p.tank_rating, p.priority_role, p.check_in) == (None, 'support', 'yes')
 
     def test_update_ratings_unknown_player(self):
         assert sl.update_player_ratings('404', '3000', '0', '0') is None
