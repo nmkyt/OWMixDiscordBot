@@ -311,16 +311,52 @@ def end():
     session.commit()
 
 
-def get_rating(lobby):
-    """Возвращает (разница рейтинга команд в пересчёте на игрока, средний рейтинг игрока в матче)."""
+def team_ratings(lobby):
+    """Возвращает (суммарный рейтинг команды 1, суммарный рейтинг команды 2)."""
     team1_rating = (sum(player.tank_rating for player in [lobby["team1"]["tank"]] if player) +
                    sum(player.damage_rating for player in lobby["team1"]["damage"]) +
                    sum(player.support_rating for player in lobby["team1"]["support"]))
     team2_rating = (sum(player.tank_rating for player in [lobby["team2"]["tank"]] if player) +
                    sum(player.damage_rating for player in lobby["team2"]["damage"]) +
                    sum(player.support_rating for player in lobby["team2"]["support"]))
+    return team1_rating, team2_rating
+
+
+def get_rating(lobby):
+    """Возвращает (разница рейтинга команд в пересчёте на игрока, средний рейтинг игрока в матче)."""
+    team1_rating, team2_rating = team_ratings(lobby)
     match_rating = (team1_rating + team2_rating) / 10
     return abs(team1_rating - team2_rating) / 5, match_rating
+
+
+# (верхняя граница разницы в SR на игрока, значок, оценка). Границы выбраны по симуляции
+# сотен лобби: до 25 SR укладывается около 55% лобби, до 50 — около 77%, свыше 100 — 7-8%.
+BALANCE_LEVELS = (
+    (10, '🟢', 'Идеальный баланс'),
+    (25, '🟢', 'Ровные команды'),
+    (50, '🟡', 'Небольшой перевес'),
+    (100, '🟠', 'Заметный перевес'),
+    (float('inf'), '🔴', 'Сильный перевес'),
+)
+TEAM_NAMES = ('💙 Синие', '💖 Красные')
+
+
+def describe_balance(lobby):
+    """Две строки о балансе лобби для !create_lobby: оценка словами (при заметном перевесе — с
+    указанием, какая команда сильнее и на сколько SR на игрока) и средний рейтинг игрока
+    в каждой команде."""
+    team1_rating, team2_rating = team_ratings(lobby)
+    diff = round(abs(team1_rating - team2_rating) / 5)
+    match_rating = round((team1_rating + team2_rating) / 10)
+    icon, verdict = next((icon, verdict) for limit, icon, verdict in BALANCE_LEVELS if diff < limit)
+
+    if diff < BALANCE_LEVELS[0][0]:
+        summary = f'{icon} {verdict}'
+    else:
+        stronger = TEAM_NAMES[0 if team1_rating > team2_rating else 1]
+        summary = f'{stronger} — {icon} {verdict}: +{diff} SR на игрока'
+    return (f'Средний рейтинг матча {match_rating} SR\n'
+            f'{summary} (💙 {round(team1_rating / 5)} · 💖 {round(team2_rating / 5)})')
 
 
 def create_lobbies_caller(lobby_count):

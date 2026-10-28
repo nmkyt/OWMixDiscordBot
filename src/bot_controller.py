@@ -13,6 +13,7 @@ from src.sync_logic import (
     check_queue,
     clear_queue,
     create_lobbies_caller,
+    describe_balance,
     end,
     format_rating,
     get_map,
@@ -709,7 +710,7 @@ async def create_lobby(ctx, lobby_count: int):
         await ctx.send(f'**🎲 Карта: {get_map()}**')
         teams_abs, match_rating = get_rating(lobby)
         logger.info(f'Lobby {i + 1}: avg rating {round(match_rating)}, team diff {teams_abs}')
-        await ctx.send(f'*Средний рейтинг матча {round(match_rating)}, Разница между командами: {teams_abs}*')
+        await ctx.send('\n'.join(f'*{line}*' for line in describe_balance(lobby).split('\n')))
         await ctx.send('------------------------------------------')
 
     if len(lobbies) < lobby_count:

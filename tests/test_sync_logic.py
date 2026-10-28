@@ -115,6 +115,55 @@ class TestGetRating:
         assert diff == 40  # |12200 - 12000| / 5
 
 
+class TestDescribeBalance:
+    @staticmethod
+    def _lobby(team1_total, team2_total):
+        """Лобби, где у каждого из 5 игроков команды одинаковый рейтинг total/5 (total кратен 5)."""
+        from types import SimpleNamespace as P
+
+        def team(total):
+            r = total // 5
+            return {'tank': P(tank_rating=r), 'damage': [P(damage_rating=r)] * 2, 'support': [P(support_rating=r)] * 2}
+        return {'team1': team(team1_total), 'team2': team(team2_total)}
+
+    def test_equal_teams(self):
+        text = sl.describe_balance(self._lobby(12000, 12000))
+        assert text == ('Средний рейтинг матча 2400 SR\n'
+                        '🟢 Идеальный баланс (💙 2400 · 💖 2400)')
+
+    def test_ideal_balance_names_no_team_and_no_diff(self):
+        # 8 SR на игрока — ещё «Идеальный баланс»: ни сильной команды, ни числа SR
+        text = sl.describe_balance(self._lobby(12040, 12000))
+        assert text == ('Средний рейтинг матча 2404 SR\n'
+                        '🟢 Идеальный баланс (💙 2408 · 💖 2400)')
+
+    def test_names_stronger_team_and_diff_per_player(self):
+        # |12150 - 12000| / 5 = 30 SR на игрока, сильнее команда 1 (синие)
+        text = sl.describe_balance(self._lobby(12150, 12000))
+        assert '💙 Синие — 🟡 Небольшой перевес: +30 SR на игрока' in text
+        assert text.endswith('(💙 2430 · 💖 2400)')
+
+    def test_red_team_stronger(self):
+        text = sl.describe_balance(self._lobby(12000, 12150))
+        assert '💖 Красные — 🟡 Небольшой перевес: +30 SR на игрока' in text
+
+    @pytest.mark.parametrize('diff_per_player, expected', [
+        (5, '🟢 Идеальный баланс'),
+        (9, '🟢 Идеальный баланс'),
+        (10, '🟢 Ровные команды'),
+        (24, '🟢 Ровные команды'),
+        (25, '🟡 Небольшой перевес'),
+        (49, '🟡 Небольшой перевес'),
+        (50, '🟠 Заметный перевес'),
+        (99, '🟠 Заметный перевес'),
+        (100, '🔴 Сильный перевес'),
+        (400, '🔴 Сильный перевес'),
+    ])
+    def test_level_boundaries(self, diff_per_player, expected):
+        text = sl.describe_balance(self._lobby(12000 + diff_per_player * 5, 12000))
+        assert expected in text
+
+
 class TestDbBackedHelpers:
     def test_active_players_filters_checked_in(self, make_player):
         make_player('1', name='A', check_in='yes')
