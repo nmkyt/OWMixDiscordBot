@@ -6,6 +6,32 @@ from src.config import session
 from src.models import MIN_RATING, MAX_RATING, Queue
 
 
+class TestGetMap:
+    @pytest.fixture(autouse=True)
+    def fresh_bag(self, monkeypatch):
+        monkeypatch.setattr(sl, '_map_bag', [])
+        monkeypatch.setattr(sl, '_last_map', None)
+
+    def test_full_cycle_has_no_repeats(self):
+        drawn = [sl.get_map() for _ in sl.maps]
+        assert sorted(drawn) == sorted(sl.maps)
+
+    def test_every_cycle_covers_all_maps(self):
+        for _ in range(3):
+            drawn = [sl.get_map() for _ in sl.maps]
+            assert set(drawn) == set(sl.maps)
+
+    def test_no_back_to_back_repeat_across_cycles(self):
+        drawn = [sl.get_map() for _ in range(len(sl.maps) * 50)]
+        assert all(a != b for a, b in zip(drawn, drawn[1:]))
+
+    def test_cycle_boundary_swaps_when_next_map_equals_last(self, monkeypatch):
+        monkeypatch.setattr(sl, '_last_map', sl.maps[-1])
+        # shuffle подменён: порядок остаётся прежним, поэтому следующей по pop() была бы maps[-1]
+        monkeypatch.setattr(sl.random, 'shuffle', lambda seq: None)
+        assert sl.get_map() != sl.maps[-1]
+
+
 class TestConvertRankToValue:
     def test_known_rank(self):
         assert sl.convert_rank_to_value('gm3') == 4200
