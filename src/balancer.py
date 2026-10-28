@@ -354,9 +354,14 @@ def _guaranteed_lobby(free_players, queued_players):
     def fallback_eligible(p, role):
         return getattr(p, RATING_ATTR[role]) is not None
 
-    match = _match_roles(candidates, needs, priority_eligible) or _match_roles(candidates, needs, fallback_eligible)
-    if match is None:
-        raise ValueError("Недостаточно игроков для полного состава лобби")
+    match = _match_roles(candidates, needs, priority_eligible)
+    if match is not None:
+        logger.info('Guaranteed matching: filled all roles by priority roles')
+    else:
+        match = _match_roles(candidates, needs, fallback_eligible)
+        if match is None:
+            raise ValueError("Недостаточно игроков для полного состава лобби")
+        logger.info('Guaranteed matching: priority roles not enough, filled roles by any rating')
 
     for role, players in match.items():
         assigned[role].extend(players)
@@ -432,7 +437,10 @@ def create_lobbies(lobby_count):
             damage, free_copy, queued_copy = find_closest_damage(free_copy, queued_copy, lobby_so_far=tanks)
             support, free_copy, queued_copy = find_closest_support(free_copy, queued_copy, lobby_so_far=tanks + damage)
             free_players, queued_players = free_copy, queued_copy
-        except ValueError:
+            logger.info(f'Lobby {len(lobbies) + 1}/{lobby_count}: formed by greedy selection')
+        except ValueError as greedy_error:
+            logger.info(f'Lobby {len(lobbies) + 1}/{lobby_count}: greedy selection failed ({greedy_error}), '
+                        f'falling back to guaranteed matching')
             try:
                 tanks, damage, support, free_players, queued_players = _guaranteed_lobby(free_players, queued_players)
             except ValueError as e:
