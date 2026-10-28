@@ -4,7 +4,7 @@
 версии — по [SemVer](https://semver.org/lang/ru/). Текущая версия хранится в
 `__version__` в [src/__init__.py](src/__init__.py).
 
-## [Unreleased]
+## [2.4.0] - 2026-10-28
 
 ### Added
 - Установщик `install.py`: создаёт виртуальное окружение, ставит зависимости и записывает `.env`
@@ -74,6 +74,7 @@
 
 Первый релиз: регистрация игроков, чек-ин, очередь, балансировка лобби, случайная карта.
 
+[2.4.0]: https://github.com/nmkyt/OWMixDiscordBot/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/nmkyt/OWMixDiscordBot/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/nmkyt/OWMixDiscordBot/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/nmkyt/OWMixDiscordBot/compare/v1.0...v2.1.0
