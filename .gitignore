@@ -10,3 +10,6 @@ dist/
 .pytest_cache/
 data/
 assets/
+
+# локальный список задач
+TODO.md
