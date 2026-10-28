@@ -66,9 +66,9 @@ bash start.sh    # Linux/macOS
 Если не хочется пользоваться установщиком:
 
 ```bash
-python -m venv venv
-venv\Scripts\activate       # Windows
-# source venv/bin/activate  # Linux/macOS
+python -m venv .venv
+.venv\Scripts\activate       # Windows
+# source .venv/bin/activate  # Linux/macOS
 pip install -r requirements.txt
 cp .env.example .env        # и заполните .env
 ```

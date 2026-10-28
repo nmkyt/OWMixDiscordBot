@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-VENV_DIR = ROOT / "venv"
+VENV_DIR = ROOT / ".venv"
 ENV_FILE = ROOT / ".env"
 ENV_BACKUP = ROOT / ".env.bak"
 MIN_PYTHON = (3, 12)

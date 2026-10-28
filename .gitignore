@@ -1,11 +1,8 @@
-venv
+.venv
 .env
 .env.bak
 __pycache__/
 *.pyc
-backup/
-build/
-dist/
 .idea/
 .pytest_cache/
 data/
