@@ -29,6 +29,9 @@ from src.sync_logic import (
 )
 
 admins = ADMIN_IDS
+# временные админы: выдаются через !admin_add, сбрасываются в !mix_stop (хранятся только в памяти —
+# после перезапуска бота права пропадают)
+temp_admins = set()
 
 DISCORD_ID_PATTERN = re.compile(r"^(?:<@!?(\d+)>|(\d+))$")
 
@@ -40,6 +43,8 @@ USAGE = {
     'queue_add': '!queue_add <discord_id>',
     'queue_remove': '!queue_remove <discord_id>',
     'uncheck': '!uncheck <discord_id>',
+    'admin_add': '!admin_add <discord_id>',
+    'admin_remove': '!admin_remove <discord_id>',
     'create_lobby': '!create_lobby 2',
 }
 
@@ -100,11 +105,13 @@ class NotAdmin(commands.CheckFailure):
     """Команду вызвал не администратор."""
 
 
-def admin_only():
+def admin_only(permanent_only: bool = False):
     """Проверка прав до разбора аргументов: не-админ всегда получает понятный отказ,
-    а не молчание бота или ошибку про аргументы."""
+    а не молчание бота или ошибку про аргументы. permanent_only=True — только админы из .env
+    (временные админы не могут выдавать и отзывать права)."""
     async def predicate(ctx):
-        if ctx.author.id not in admins:
+        allowed = admins if permanent_only else admins | temp_admins
+        if ctx.author.id not in allowed:
             raise NotAdmin()
         return True
     return commands.check(predicate)
@@ -350,6 +357,11 @@ async def mix_help(ctx):
         '`!uncheck @игрок` — снять чек-ин и убрать из очереди\n'
         '`!user_update @игрок Танк DPS Саппорт` — изменить рейтинг игрока'
     ))
+    embed.add_field(name='🔑 Админам: права', inline=False, value=(
+        '`!admin_add @игрок` / `!admin_remove @игрок` — выдать / снять временные права админа '
+        '(только постоянным админам); после `!mix_stop` временные права снимаются\n'
+        '`!admin_list` — список админов'
+    ))
     embed.set_footer(text='Вместо @игрок можно указать Discord ID числом.')
     await ctx.send(embed=embed)
 
@@ -479,8 +491,62 @@ async def mix_stop(ctx):
         logger.exception('Error stopping mix')
         await ctx.send(system_error_text('завершить миксы'))
         return
-    logger.info(f'Mix stopped by {_who(ctx)}: all players checked out, anti-repeat history reset')
-    await ctx.send("Все игроки переведены в неактивный статус, история анти-повтора очищена.")
+    revoked = len(temp_admins)
+    temp_admins.clear()
+    logger.info(f'Mix stopped by {_who(ctx)}: all players checked out, anti-repeat history reset, '
+                f'{revoked} temporary admins revoked')
+    message = "Все игроки переведены в неактивный статус, история анти-повтора очищена."
+    if revoked:
+        message += f" Временные администраторы сняты: {revoked}."
+    await ctx.send(message)
+
+
+@bot.command(ignore_extra=False)
+@admin_only(permanent_only=True)
+async def admin_add(ctx, discord_id: str):
+    """Выдать временные права админа до !mix_stop (постоянный админ)."""
+    discord_id = parse_discord_id(discord_id)
+    user_id = int(discord_id)
+    if user_id in admins:
+        raise InputError(f'{discord_id} уже постоянный администратор.', with_usage=False)
+    if user_id in temp_admins:
+        raise InputError(f'{discord_id} уже временный администратор.', with_usage=False)
+
+    temp_admins.add(user_id)
+    logger.info(f'{_who(ctx)} granted temporary admin to {discord_id}')
+    await ctx.send(f'<@{discord_id}> теперь временный администратор — права пропадут после !mix_stop.',
+                   allowed_mentions=discord.AllowedMentions.none())
+
+
+@bot.command(ignore_extra=False)
+@admin_only(permanent_only=True)
+async def admin_remove(ctx, discord_id: str):
+    """Досрочно снять временные права админа (постоянный админ)."""
+    discord_id = parse_discord_id(discord_id)
+    user_id = int(discord_id)
+    if user_id in admins:
+        raise InputError(f'{discord_id} постоянный администратор — его права задаются в .env.',
+                         with_usage=False)
+    if user_id not in temp_admins:
+        raise InputError(f'{discord_id} не временный администратор.', with_usage=False)
+
+    temp_admins.discard(user_id)
+    logger.info(f'{_who(ctx)} revoked temporary admin from {discord_id}')
+    await ctx.send(f'У <@{discord_id}> сняты временные права администратора.',
+                   allowed_mentions=discord.AllowedMentions.none())
+
+
+@bot.command()
+@admin_only()
+async def admin_list(ctx):
+    """Показать постоянных и временных администраторов (админ)."""
+    def mentions(ids):
+        return ' '.join(f'<@{i}>' for i in sorted(ids)) or '—'
+
+    await ctx.send(f'**🛠️ Администраторы**\n'
+                   f'Постоянные: {mentions(admins)}\n'
+                   f'Временные (до !mix_stop): {mentions(temp_admins)}',
+                   allowed_mentions=discord.AllowedMentions.none())
 
 
 @bot.command()

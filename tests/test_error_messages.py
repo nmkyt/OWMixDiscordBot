@@ -83,6 +83,13 @@ def last(content, author_id=PLAYER_ID):
     ('!queue_remove 123', ADMIN_ID),
     ('!uncheck 123', ADMIN_ID),
     ('!user_update 123 3000 3000 3000', ADMIN_ID),
+    ('!admin_add 123', PLAYER_ID),
+    ('!admin_add', ADMIN_ID),
+    ('!admin_add abc', ADMIN_ID),
+    ('!admin_add 123 456', ADMIN_ID),
+    ('!admin_add 111111111111111111', ADMIN_ID),
+    ('!admin_remove 123', ADMIN_ID),
+    ('!admin_remove 111111111111111111', ADMIN_ID),
 ])
 def test_every_user_error_is_reported_in_unified_format(content, author_id):
     assert last(content, author_id).startswith('❌ ')
@@ -188,6 +195,71 @@ class TestAdminCommands:
 
     def test_user_update_unknown_user(self):
         assert 'не зарегистрирован' in last('!user_update 999 3000 3000 3000', ADMIN_ID)
+
+
+class TestTempAdmins:
+    @pytest.fixture(autouse=True)
+    def clean_temp_admins(self, monkeypatch):
+        monkeypatch.setattr(bc, 'temp_admins', set())
+        # !mix_stop сбрасывает историю анти-повтора на диск — в тестах файл не трогаем
+        monkeypatch.setattr(bc, 'reset_history', lambda: None)
+
+    def test_temp_admin_gets_admin_commands(self):
+        assert last('!players', PLAYER_ID).startswith('❌ ')
+        assert 'временный администратор' in last(f'!admin_add {PLAYER_ID}', ADMIN_ID)
+        assert not last('!players', PLAYER_ID).startswith('❌ ')
+
+    def test_admin_add_accepts_mention(self):
+        last(f'!admin_add <@{PLAYER_ID}>', ADMIN_ID)
+        assert PLAYER_ID in bc.temp_admins
+
+    def test_temp_admin_cannot_manage_admins(self):
+        last(f'!admin_add {PLAYER_ID}', ADMIN_ID)
+        assert 'недостаточно прав' in last('!admin_add 42', PLAYER_ID)
+        assert 'недостаточно прав' in last(f'!admin_remove {PLAYER_ID}', PLAYER_ID)
+        assert bc.temp_admins == {PLAYER_ID}
+
+    def test_duplicates_and_permanent_admins_are_rejected(self):
+        last(f'!admin_add {PLAYER_ID}', ADMIN_ID)
+        assert 'уже временный' in last(f'!admin_add {PLAYER_ID}', ADMIN_ID)
+        assert 'уже постоянный' in last(f'!admin_add {ADMIN_ID}', ADMIN_ID)
+        assert 'постоянный администратор' in last(f'!admin_remove {ADMIN_ID}', ADMIN_ID)
+        assert 'не временный' in last('!admin_remove 42', ADMIN_ID)
+
+    def test_admin_remove_revokes_rights(self):
+        last(f'!admin_add {PLAYER_ID}', ADMIN_ID)
+        last(f'!admin_remove {PLAYER_ID}', ADMIN_ID)
+        assert 'недостаточно прав' in last('!players', PLAYER_ID)
+
+    def test_mix_stop_revokes_temp_admins(self):
+        last(f'!admin_add {PLAYER_ID}', ADMIN_ID)
+        assert 'Временные администраторы сняты: 1' in last('!mix_stop', ADMIN_ID)
+        assert bc.temp_admins == set()
+        assert 'недостаточно прав' in last('!players', PLAYER_ID)
+
+    def test_temp_admin_can_run_mix_stop(self):
+        last(f'!admin_add {PLAYER_ID}', ADMIN_ID)
+        last('!mix_stop', PLAYER_ID)
+        assert bc.temp_admins == set()
+
+    def test_failed_mix_stop_keeps_temp_admins(self, monkeypatch):
+        async def broken_db(*args, **kwargs):
+            raise RuntimeError('db down')
+        last(f'!admin_add {PLAYER_ID}', ADMIN_ID)
+        monkeypatch.setattr(bc, 'run_db', broken_db)
+        assert last('!mix_stop', ADMIN_ID).startswith('⚠️ ')
+        assert bc.temp_admins == {PLAYER_ID}
+
+    def test_admin_list_shows_both_kinds(self):
+        last(f'!admin_add {PLAYER_ID}', ADMIN_ID)
+        msg = last('!admin_list', ADMIN_ID)
+        assert f'<@{ADMIN_ID}>' in msg and f'<@{PLAYER_ID}>' in msg
+
+    def test_grant_is_audited(self, caplog):
+        caplog.set_level('INFO')
+        last(f'!admin_add {PLAYER_ID}', ADMIN_ID)
+        assert any(f'({ADMIN_ID}) granted temporary admin to {PLAYER_ID}' in r.getMessage()
+                   for r in caplog.records)
 
 
 class TestLogging:
