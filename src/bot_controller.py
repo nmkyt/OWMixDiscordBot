@@ -4,6 +4,7 @@ import discord
 
 from discord.ext import commands
 
+from src import __version__
 from src.config import bot, BOT_TOKEN, ADMIN_IDS, run_db, logger
 from src.balancer import reset_history
 from src.sync_logic import (
@@ -242,7 +243,7 @@ class CheckinView(discord.ui.View):
 @bot.event
 async def on_ready():
     logger.info(f'Logged in as {bot.user.name}')
-    logger.info('Overwatch Mix Discord Bot v2.2')
+    logger.info(f'Overwatch Mix Discord Bot v{__version__}')
     logger.info('Developed by nmkyt')
     logger.info('Command list available at !mix_help in Discord app')
 
