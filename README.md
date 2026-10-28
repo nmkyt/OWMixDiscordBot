@@ -20,41 +20,76 @@ Discord-бот для проведения миксов по Overwatch.
 - защиту от однообразных составов: бот помнит недавние пары "играли вместе"/"играли друг против
   друга" и старается не повторять их слишком часто в пределах одного вечера.
 
-## Требования
+## Быстрый старт
 
-- Python 3.12+
-- PostgreSQL (база данных для игроков и очереди)
-- Токен Discord-бота ([Discord Developer Portal](https://discord.com/developers/applications))
+Нужен только [Python 3.12+](https://www.python.org/downloads/) (на Windows при установке отметьте
+«Add python.exe to PATH»). Базу данных ставить не нужно — по умолчанию бот хранит всё в файле SQLite.
 
-## Установка
+**1. Создайте бота в Discord**
+
+1. Откройте [Discord Developer Portal](https://discord.com/developers/applications) → **New Application**.
+2. Вкладка **Bot** → **Reset Token** → скопируйте токен (он понадобится установщику).
+3. Там же, в **Privileged Gateway Intents**, включите **Message Content Intent** — без него бот не
+   увидит команды.
+4. Вкладка **OAuth2 → URL Generator**: отметьте scope `bot` и права *View Channels*, *Send Messages*,
+   *Embed Links*, *Read Message History*. Откройте сгенерированную ссылку и добавьте бота на свой сервер.
+
+**2. Установите и запустите бота**
 
 ```bash
 git clone https://github.com/nmkyt/OWMixDiscordBot.git
 cd OWMixDiscordBot
+python install.py
+```
+
+Установщик создаст виртуальное окружение, поставит зависимости и спросит токен бота, свой Discord ID
+(он станет администратором) и тип базы данных; всё запишется в `.env`. Запуск бота:
+
+```bash
+start.bat        # Windows (двойной щелчок тоже работает)
+```
+
+```bash
+bash start.sh    # Linux/macOS
+```
+
+`install.py` можно запускать повторно: существующий `.env` он по умолчанию оставляет как есть, а при
+перезаписи сохраняет старый как `.env.bak`.
+
+Узнать свой Discord ID: Настройки пользователя → Расширенные настройки → Режим разработчика,
+затем ПКМ по себе → «Копировать ID».
+
+## Ручная установка
+
+Если не хочется пользоваться установщиком:
+
+```bash
 python -m venv venv
 venv\Scripts\activate       # Windows
 # source venv/bin/activate  # Linux/macOS
 pip install -r requirements.txt
-```
-
-Скопируйте [.env.example](.env.example) в `.env` и заполните своими значениями:
-
-```bash
-cp .env.example .env
+cp .env.example .env        # и заполните .env
 ```
 
 | Переменная     | Описание                                                          |
 |----------------|--------------------------------------------------------------------|
 | `BOT_TOKEN`    | Токен Discord-бота                                                  |
-| `DATABASE_URL` | Строка подключения к PostgreSQL, напр. `postgresql://user:pass@localhost:5432/owmix` |
 | `ADMIN_IDS`    | Discord ID администраторов через запятую (кому доступны `!check`, `!create_lobby`, `!mix_stop` и т.д.) |
+| `DATABASE_URL` | Необязательно. Строка подключения SQLAlchemy; если не задана — SQLite-файл `data/owmix.db` |
 
-Таблицы (`players`, `queue`) создаются автоматически при первом запуске.
+## База данных
+
+- **SQLite (по умолчанию).** `DATABASE_URL` не нужен: бот сам создаёт файл `data/owmix.db`. Для
+  бота на одном сервере этого достаточно. Резервная копия — копия этого файла при остановленном боте.
+- **PostgreSQL.** Задайте `DATABASE_URL=postgresql://user:pass@localhost:5432/owmix` и поставьте драйвер:
+  `pip install -r requirements-postgres.txt` (установщик делает это сам, если выбрать PostgreSQL).
+
+Таблицы (`players`, `queue`) создаются автоматически при первом запуске. Переносить игроков между
+SQLite и PostgreSQL автоматически нельзя: у каждой базы своя история. Смена `DATABASE_URL` на другую
+базу значит начало с пустой.
 
 Чтобы стать администратором бота (и получить доступ к проведению миксов), добавьте свой Discord ID
-в `ADMIN_IDS` в `.env` и перезапустите бота — править исходный код для этого не нужно. Узнать свой
-Discord ID: Настройки пользователя → Расширенные настройки → Режим разработчика, затем ПКМ по себе
-→ «Копировать ID».
+в `ADMIN_IDS` в `.env` и перезапустите бота — править исходный код для этого не нужно.
 
 Помощников на один вечер можно назначать без правки `.env`: `!admin_add discord_id` выдаёт
 временные права админа, и они снимаются при `!mix_stop`. Временный админ может пользоваться всеми
@@ -62,6 +97,8 @@ Discord ID: Настройки пользователя → Расширенны
 Временные права хранятся в памяти: при перезапуске бота они пропадают.
 
 ## Запуск
+
+Без скриптов запуска (из активированного виртуального окружения):
 
 ```bash
 python -m src.bot_controller
@@ -132,8 +169,12 @@ src/
   balancer.py          — сборка сбалансированных лобби, анти-повтор составов
   sync_logic.py        — работа с данными: регистрация и рейтинги игроков, чек-ин, очередь, статистика, карты
 tests/                 — юнит-тесты (pytest), см. ниже
-data/
-  recent_pairs.json    — история недавних составов (создаётся автоматически, не в git)
+install.py             — установщик: окружение, зависимости, .env
+start.bat, start.sh    — запуск бота (Windows / Linux, macOS)
+requirements.txt       — зависимости; requirements-postgres.txt — то же + драйвер PostgreSQL
+data/                  — создаётся автоматически, не в git
+  owmix.db             — база SQLite (если не задан DATABASE_URL)
+  recent_pairs.json    — история недавних составов
 ```
 
 ## Тесты

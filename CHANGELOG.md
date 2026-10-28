@@ -7,11 +7,19 @@
 ## [Unreleased]
 
 ### Added
+- Установщик `install.py`: создаёт виртуальное окружение, ставит зависимости и записывает `.env`
+  (токен, админы, тип БД); скрипты запуска `start.bat` и `start.sh`.
+- SQLite как база данных по умолчанию: если `DATABASE_URL` не задан, бот создаёт `data/owmix.db`.
+  PostgreSQL работает как раньше при заданном `DATABASE_URL`.
+- Пошаговая инструкция по созданию Discord-бота в README (Message Content Intent, ссылка-приглашение).
 - Временные администраторы: `!admin_add discord_id` выдаёт права админа до `!mix_stop`,
   `!admin_remove` снимает их досрочно, `!admin_list` показывает всех админов. Выдавать и снимать
   права могут только постоянные админы из `ADMIN_IDS`; `!mix_stop` сбрасывает все временные права.
 
 ### Changed
+- Драйвер PostgreSQL вынесен из `requirements.txt` в `requirements-postgres.txt` (и заменён на
+  `psycopg2-binary`, который не требует компилятора). Для PostgreSQL ставьте
+  `pip install -r requirements-postgres.txt`.
 - Карты для лобби выбираются без повторов: пока не сыграны все карты из списка, ни одна
   не выпадет второй раз, в том числе между лобби одного `!create_lobby`.
 
